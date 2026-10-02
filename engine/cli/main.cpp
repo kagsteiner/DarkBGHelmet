@@ -251,6 +251,62 @@ int main(int argc, char** argv) {
                 n, plies, 100.0 * dbl_agree / n, 1000 * dbl_err / n, 100.0 * take_agree / take_n, 1000 * take_err / take_n);
     return 0;
   }
+  if (cmd == "duel" && argc >= 5) {
+    // bgcli duel <netA> <netB> <games> [pliesA] [pliesB] [threads]
+    // Cubeless money games (gammons count), duplicate pairs: the same dice are
+    // replayed with the roles swapped. Reports points per game for A.
+    Evaluator ea, eb;
+    std::string err;
+    if (!ea.init(argv[2], "data", &err) || !eb.init(argv[3], "data", &err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; }
+    const int pairs = std::max(1, std::atoi(argv[4]) / 2);
+    const int pa = argc > 5 ? std::atoi(argv[5]) : 1, pb = argc > 6 ? std::atoi(argv[6]) : 1;
+    const int threads = argc > 7 ? std::atoi(argv[7]) : int(std::thread::hardware_concurrency());
+    std::vector<double> res(pairs, 0);
+    std::atomic<int> next{0};
+    auto t0 = std::chrono::steady_clock::now();
+    std::vector<std::thread> th;
+    for (int t = 0; t < threads; ++t)
+      th.emplace_back([&]() {
+        Searcher sa(ea, 1, 16), sb(eb, 1, 16);
+        MatchState ms;
+        ms.jacoby = false;
+        SearchConfig ca = SearchConfig::for_plies(pa), cb = SearchConfig::for_plies(pb);
+        ca.cubeful = cb.cubeful = false;
+        for (int i; (i = next.fetch_add(1)) < pairs;) {
+          double sum = 0;
+          for (int g = 0; g < 2; ++g) {
+            std::mt19937_64 rng(1000003ULL * i + 17);
+            Board b = Board::start();
+            bool a_to_move = g == 0;
+            bool first = true;
+            for (;;) {
+              int d1 = int(rng() % 6) + 1, d2 = int(rng() % 6) + 1;
+              while (first && d1 == d2) { d1 = int(rng() % 6) + 1; d2 = int(rng() % 6) + 1; }
+              first = false;
+              MoveAnalysis an = a_to_move ? sa.analyze_moves(b, d1, d2, ms, ca) : sb.analyze_moves(b, d1, d2, ms, cb);
+              const Board after = an.moves[0].move.after;
+              if (after.side[0] == 0) {
+                int pts = int(after.result_for_winner(0));
+                sum += a_to_move ? pts : -pts;
+                break;
+              }
+              b = after.swapped();
+              a_to_move = !a_to_move;
+            }
+          }
+          res[i] = sum / 2;
+        }
+      });
+    for (auto& x : th) x.join();
+    double m = 0, v = 0;
+    for (double r : res) m += r;
+    m /= pairs;
+    for (double r : res) v += (r - m) * (r - m);
+    double se = std::sqrt(v / (pairs - 1 > 0 ? pairs - 1 : 1) / pairs);
+    std::printf("duel %s (%d-ply) vs %s (%d-ply): %d games, A ppg %+.4f (se %.4f)  %.0fs\n", argv[2], pa, argv[3], pb,
+                2 * pairs, m, se, std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
+    return 0;
+  }
   if (cmd == "speed") {
     // Single-thread throughput of move generation + incremental evaluation.
     Evaluator ev;
