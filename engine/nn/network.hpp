@@ -21,6 +21,7 @@
 namespace bg {
 
 constexpr int kMaxHidden = 512;
+constexpr int kMaxDense = 128;  // max width of the two small dense layers
 
 struct Network {
   int H = 256, E = kExtraFeatures, L2 = 32, L3 = 32, heads = kHeads;
