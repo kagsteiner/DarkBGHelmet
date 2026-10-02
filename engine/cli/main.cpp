@@ -14,6 +14,7 @@
 #include <cmath>
 #include <map>
 #include "eval/cube.hpp"
+#include "search/search.hpp"
 
 using namespace bg;
 
@@ -179,6 +180,49 @@ int main(int argc, char** argv) {
     for (auto& [k, ac] : by)
       std::printf("%s  n=%ld  OPT rmse %.4f  DT rmse %.4f  decision agree %.1f%%\n", k.c_str(), ac.n,
                   std::sqrt(ac.nd / ac.n), std::sqrt(ac.dt / ac.n), 100.0 * ac.agree / ac.n);
+    return 0;
+  }
+  if ((cmd == "move" || cmd == "cube") && argc >= 3) {
+    // bgcli move <id> <dice> [plies] [net] [threads] | bgcli cube <id> [plies] [net] [threads]
+    Position p;
+    std::string err;
+    if (!parse_any(argv[2], p, &err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; }
+    int ai = 3;
+    int d1 = 0, d2 = 0;
+    if (cmd == "move") {
+      if (argc < 4) return 1;
+      d1 = argv[3][0] - '0';
+      d2 = argv[3][1] - '0';
+      ai = 4;
+    }
+    int plies = argc > ai ? std::atoi(argv[ai]) : 2;
+    std::string net = argc > ai + 1 ? argv[ai + 1] : "nets/latest.bgnn";
+    int threads = argc > ai + 2 ? std::atoi(argv[ai + 2]) : 0;
+    Evaluator ev;
+    if (!ev.init(net, "data", &err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; }
+    Searcher s(ev, threads);
+    SearchConfig cfg = SearchConfig::for_plies(plies);
+    if (const char* e = std::getenv("BG_SAMPLED")) cfg.sampled_rolls = std::atoi(e);
+    if (const char* e = std::getenv("BG_FULL")) cfg.full_layers = std::atoi(e);
+    std::printf("%s", p.board.ascii().c_str());
+    if (cmd == "move") {
+      MoveAnalysis a = s.analyze_moves(p.board, d1, d2, p.match, cfg);
+      for (size_t i = 0; i < a.moves.size() && i < 12; ++i) {
+        const MoveEval& m = a.moves[i];
+        std::printf("%2zu. %-24s %d-ply  emg %+.4f (%+.4f)  w %.3f g %.3f bg %.3f | l %.3f g %.3f bg %.3f\n", i + 1,
+                    m.move.str().c_str(), m.plies, m.emg, m.emg - a.moves[0].emg, m.probs[0], m.probs[1], m.probs[2],
+                    1 - m.probs[0], m.probs[3], m.probs[4]);
+      }
+      std::printf("%llu nodes, %.3f s\n", (unsigned long long)a.nodes, a.seconds);
+    } else {
+      CubeResult r = s.analyze_cube(p.board, p.match, cfg);
+      const CubeAnalysis& a = r.analysis;
+      std::printf("%d-ply  w %.3f g %.3f bg %.3f | l %.3f g %.3f bg %.3f\n", r.plies, a.probs[0], a.probs[1],
+                  a.probs[2], 1 - a.probs[0], a.probs[3], a.probs[4]);
+      std::printf("No double %+.4f  Double/take %+.4f  Double/pass %+.4f   => %s\n", r.nd_emg, r.dt_emg, r.dp_emg,
+                  to_string(a.decision, p.match.owner == CubeOwner::Me));
+      std::printf("%llu nodes, %.3f s\n", (unsigned long long)r.nodes, r.seconds);
+    }
     return 0;
   }
   if (cmd == "eval" && argc >= 3) {
