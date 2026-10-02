@@ -207,6 +207,50 @@ int main(int argc, char** argv) {
                 cm.to_emg(r.cubeful), r.se_cubeful);
     return 0;
   }
+  if (cmd == "cubebench" && argc >= 3) {
+    // bgcli cubebench <file> [plies] [net] [threads]: our cube decisions vs gnubg (tools/gnubg_cubebench.py)
+    int plies = argc > 3 ? std::atoi(argv[3]) : 1;
+    Evaluator ev;
+    std::string err;
+    if (!ev.init(argc > 4 ? argv[4] : "nets/latest.bgnn", "data", &err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; }
+    Searcher s(ev, argc > 5 ? std::atoi(argv[5]) : 0);
+    FILE* f = std::fopen(argv[2], "r");
+    if (!f) return 1;
+    char pid[32];
+    int len, s0, s1, cube, owner, code;
+    float opt, dt, dp;
+    int n = 0, dbl_agree = 0, take_agree = 0, take_n = 0;
+    double dbl_err = 0, take_err = 0;
+    while (std::fscanf(f, " C2 %31s %d %d %d %d %d %f %f %f %d", pid, &len, &s0, &s1, &cube, &owner, &opt, &dt, &dp,
+                       &code) == 10) {
+      Board b;
+      if (!parse_position_id(pid, b)) continue;
+      MatchState ms;
+      ms.length = len;
+      ms.score[0] = s0;
+      ms.score[1] = s1;
+      ms.cube = cube;
+      ms.owner = owner < 0 ? CubeOwner::Center : (owner == 0 ? CubeOwner::Me : CubeOwner::Opp);
+      ms.beavers = false;
+      CubeResult r = s.analyze_cube(b, ms, SearchConfig::for_plies(plies));
+      if (!r.analysis.can_double) continue;
+      const bool g_dbl = std::fabs(opt - std::min(dt, dp)) < 1e-5f;
+      const bool g_take = dt <= dp;
+      const bool o_dbl = r.analysis.decision == CubeDecision::DoubleTake || r.analysis.decision == CubeDecision::DoublePass;
+      ++n;
+      if (g_dbl == o_dbl) ++dbl_agree;
+      else if (!g_dbl && o_dbl) dbl_err += opt - std::min(dt, dp);  // gnubg's "no double" value is known here
+      // Take decision matters when gnubg considers the position a double (or close).
+      ++take_n;
+      if (g_take == r.analysis.take) ++take_agree;
+      else take_err += std::fabs(dp - dt);
+    }
+    std::fclose(f);
+    std::printf("cube positions %d (%d-ply): double/no-double agree %.1f%% (known error from wrong doubles %.1f mEq/pos)  "
+                "take/pass agree %.1f%% (error %.1f mEq/pos)\n",
+                n, plies, 100.0 * dbl_agree / n, 1000 * dbl_err / n, 100.0 * take_agree / take_n, 1000 * take_err / take_n);
+    return 0;
+  }
   if (cmd == "speed") {
     // Single-thread throughput of move generation + incremental evaluation.
     Evaluator ev;
