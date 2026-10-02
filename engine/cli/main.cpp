@@ -10,6 +10,8 @@
 
 #include "core/ids.hpp"
 #include "core/movegen.hpp"
+#include "eval/evaluator.hpp"
+#include <cmath>
 
 using namespace bg;
 
@@ -89,6 +91,47 @@ int main(int argc, char** argv) {
     }
     std::printf("checked: %d ok, %d mismatches\n", ok, bad);
     return bad ? 2 : 0;
+  }
+  if (cmd == "compare") {
+    // Reads "<posid> <plies> p0..p4" label lines on stdin, compares the static
+    // evaluation: bgcli compare [net] < labels
+    Evaluator ev;
+    std::string err;
+    if (!ev.init(argc >= 3 ? argv[2] : "", "data", &err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; }
+    char pid[32];
+    int plies;
+    float q[5];
+    double se = 0, ae = 0, aw = 0;
+    long n = 0;
+    double cls_se[5] = {}; long cls_n[5] = {};
+    while (std::scanf("%31s %d %f %f %f %f %f", pid, &plies, &q[0], &q[1], &q[2], &q[3], &q[4]) == 7) {
+      Board b;
+      if (!parse_position_id(pid, b)) continue;
+      Probs p = ev.evaluate(b);
+      Probs t;
+      for (int i = 0; i < 5; ++i) t[i] = q[i];
+      double d = p.equity() - t.equity();
+      se += d * d; ae += std::fabs(d); aw += std::fabs(p[kWin] - t[kWin]); ++n;
+      int c = int(classify(b));
+      cls_se[c] += d * d; cls_n[c]++;
+    }
+    if (!n) return 1;
+    std::printf("n=%ld  equity rmse %.4f  mae %.4f  win mae %.4f\n", n, std::sqrt(se / n), ae / n, aw / n);
+    const char* names[5] = {"over", "bearoff", "race", "contact", "crashed"};
+    for (int c = 0; c < 5; ++c)
+      if (cls_n[c]) std::printf("  %-8s n=%-8ld rmse %.4f\n", names[c], cls_n[c], std::sqrt(cls_se[c] / cls_n[c]));
+    return 0;
+  }
+  if (cmd == "eval" && argc >= 3) {
+    Position p;
+    std::string err;
+    if (!parse_any(argv[2], p, &err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; }
+    Evaluator ev;
+    if (!ev.init(argc >= 4 ? argv[3] : "", "data", &err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; }
+    Probs r = ev.evaluate(p.board);
+    std::printf("%s", p.board.ascii().c_str());
+    std::printf("win %.4f wg %.4f wbg %.4f lg %.4f lbg %.4f  equity %+.4f\n", r[0], r[1], r[2], r[3], r[4], r.equity());
+    return 0;
   }
   if (cmd == "perft" && argc >= 3) {
     int depth = std::atoi(argv[2]);
