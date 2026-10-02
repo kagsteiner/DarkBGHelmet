@@ -3,6 +3,8 @@
 #include <stdexcept>
 #include <thread>
 
+#include "search/rollout.hpp"
+
 using nlohmann::json;
 
 namespace bg {
@@ -226,6 +228,70 @@ json Engine::analyze(const json& req) {
   if (p.dice[0]) out["checker"] = move(req);
   out["position"] = position_json(p);
   return out;
+}
+
+}  // namespace bg
+
+namespace bg {
+
+// Rolls out the position (before the roll) or, with dice, every candidate play
+// among the best `candidates` at 1-ply.
+json Engine::rollout(const json& req) {
+  Position p = parse_request(req);
+  json o = req.contains("options") ? req["options"] : json::object();
+  RolloutConfig rc;
+  if (o.contains("trials")) rc.trials = o["trials"].get<int>();
+  if (o.contains("truncate")) rc.truncate = o["truncate"].get<int>();
+  if (o.contains("cubeful")) rc.cubeful = o["cubeful"].get<bool>();
+  if (o.contains("variance_reduction")) rc.variance_reduction = o["variance_reduction"].get<bool>();
+  if (o.contains("seed")) rc.seed = o["seed"].get<uint64_t>();
+  if (rc.trials < 1 || rc.trials > 1000000) bad("trials must be 1..1000000");
+  std::lock_guard<std::mutex> g(mutex_);
+  CubeModel cm(p.match);
+  auto result_json = [&](const RolloutResult& r, const CubeModel& m) {
+    json j = {{"probabilities", probs_json(r.probs)},
+              {"cubeless_equity", m.to_emg(r.cubeless)},
+              {"cubeful_equity", m.to_emg(r.cubeful)},
+              {"std_error", {{"cubeless", r.se_cubeless}, {"cubeful", r.se_cubeful}}},
+              {"trials", r.trials},
+              {"time_ms", r.seconds * 1000}};
+    if (!p.match.money()) j["mwc"] = {{"cubeless", r.cubeless}, {"cubeful", r.cubeful}};
+    return j;
+  };
+  if (!p.dice[0]) {
+    RolloutResult r = bg::rollout(ev_, p.board, p.match, rc, search_->pool());
+    json j = result_json(r, cm);
+    j["note"] = "cubeful value assumes the player on roll does not double now";
+    return j;
+  }
+  int cands = o.contains("candidates") ? o["candidates"].get<int>() : 4;
+  SearchConfig sc = SearchConfig::for_plies(1);
+  MoveAnalysis a = search_->analyze_moves(p.board, p.dice[0], p.dice[1], p.match, sc);
+  json moves = json::array();
+  const MatchState opp = p.match.swapped();
+  CubeModel ocm(opp);
+  for (int i = 0; i < int(a.moves.size()) && i < cands; ++i) {
+    const MoveEval& m = a.moves[i];
+    json j;
+    if (m.move.after.side[0] == 0) {
+      j = {{"probabilities", probs_json(m.probs)}, {"cubeful_equity", m.emg}, {"trials", 0}};
+    } else {
+      RolloutResult r = bg::rollout(ev_, m.move.after.swapped(), opp, rc, search_->pool());
+      // Seen from the mover: invert the opponent's result.
+      RolloutResult mine = r;
+      mine.probs = r.probs.inverted();
+      mine.cubeless = p.match.money() ? -r.cubeless : 1 - r.cubeless;
+      mine.cubeful = p.match.money() ? -r.cubeful : 1 - r.cubeful;
+      j = result_json(mine, cm);
+      j["note"] = "the opponent may double before its first roll in the cubeful value";
+    }
+    j["move"] = m.move.str();
+    moves.push_back(j);
+  }
+  std::stable_sort(moves.begin(), moves.end(), [](const json& x, const json& y) {
+    return x["cubeful_equity"].get<double>() > y["cubeful_equity"].get<double>();
+  });
+  return {{"dice", {p.dice[0], p.dice[1]}}, {"moves", moves}};
 }
 
 }  // namespace bg

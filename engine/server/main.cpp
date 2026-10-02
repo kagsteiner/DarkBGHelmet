@@ -61,6 +61,7 @@ int main(int argc, char** argv) {
   srv.Post("/v1/move", handler(&bg::Engine::move));
   srv.Post("/v1/cube", handler(&bg::Engine::cube));
   srv.Post("/v1/analyze", handler(&bg::Engine::analyze));
+  srv.Post("/v1/rollout", handler(&bg::Engine::rollout));
   srv.Options(R"(/v1/.*)", [](const httplib::Request&, httplib::Response& res) {
     res.set_header("Access-Control-Allow-Origin", "*");
     res.set_header("Access-Control-Allow-Headers", "Content-Type");

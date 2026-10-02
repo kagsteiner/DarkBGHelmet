@@ -18,6 +18,7 @@
 #include "eval/cube.hpp"
 #include "eval/features.hpp"
 #include "search/search.hpp"
+#include "search/rollout.hpp"
 
 using namespace bg;
 
@@ -183,6 +184,27 @@ int main(int argc, char** argv) {
     for (auto& [k, ac] : by)
       std::printf("%s  n=%ld  OPT rmse %.4f  DT rmse %.4f  decision agree %.1f%%\n", k.c_str(), ac.n,
                   std::sqrt(ac.nd / ac.n), std::sqrt(ac.dt / ac.n), 100.0 * ac.agree / ac.n);
+    return 0;
+  }
+  if (cmd == "rollout" && argc >= 3) {
+    // bgcli rollout <id> [trials] [truncate] [net] [threads] [vr 0/1]
+    Position p;
+    std::string err;
+    if (!parse_any(argv[2], p, &err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; }
+    RolloutConfig rc;
+    rc.trials = argc > 3 ? std::atoi(argv[3]) : 1296;
+    rc.truncate = argc > 4 ? std::atoi(argv[4]) : 0;
+    Evaluator ev;
+    if (!ev.init(argc > 5 ? argv[5] : "nets/latest.bgnn", "data", &err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; }
+    ThreadPool pool(argc > 6 ? std::atoi(argv[6]) : 0);
+    rc.variance_reduction = argc > 7 ? std::atoi(argv[7]) != 0 : false;
+    RolloutResult r = rollout(ev, p.board, p.match, rc, pool);
+    CubeModel cm(p.match);
+    std::printf("%s", p.board.ascii().c_str());
+    std::printf("rollout %d trials (%.1fs): w %.4f g %.4f bg %.4f | l %.4f g %.4f bg %.4f\n", r.trials, r.seconds,
+                r.probs[0], r.probs[1], r.probs[2], 1 - r.probs[0], r.probs[3], r.probs[4]);
+    std::printf("cubeless %+.4f (se %.4f)   cubeful (no double) %+.4f (se %.4f)\n", cm.to_emg(r.cubeless), r.se_cubeless,
+                cm.to_emg(r.cubeful), r.se_cubeful);
     return 0;
   }
   if (cmd == "speed") {

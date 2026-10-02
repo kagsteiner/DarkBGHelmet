@@ -38,6 +38,7 @@ class Engine {
   nlohmann::json move(const nlohmann::json& req);
   nlohmann::json cube(const nlohmann::json& req);
   nlohmann::json analyze(const nlohmann::json& req);
+  nlohmann::json rollout(const nlohmann::json& req);
 
   void set_threads(int t);
   void stop() { if (search_) search_->stop(); }
