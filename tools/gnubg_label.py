@@ -8,7 +8,7 @@
 #   <posid of position after the move, opponent on roll> <plies> <p0> .. <p4>
 # with probabilities (win, win g, win bg, lose g, lose bg) from the view of the
 # player now on roll.
-import os, random, sys, time
+import os, random, subprocess, sys, time
 import gnubg
 
 seed = int(os.environ.get("BG_SEED", "1"))
@@ -17,6 +17,26 @@ plies = int(os.environ.get("BG_PLIES", "2"))
 count = int(os.environ.get("BG_COUNT", "1000000"))
 accept = int(os.environ.get("BG_ACCEPT", "12"))
 rng = random.Random(seed)
+# BG_OURS = fraction of games in which DarkBGHelmet (via BGEI, 1-ply) chooses the
+# moves instead of gnubg, so the labels also cover positions our own play reaches.
+ours_frac = float(os.environ.get("BG_OURS", "0"))
+eng = None
+if ours_frac > 0:
+    eng = subprocess.Popen([os.environ.get("BG_ENGINE", "build/bgei"), "--net", os.environ.get("BG_NET", "nets/latest.bgnn"),
+                            "--threads", "1"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
+
+
+def our_best(pid, d1, d2):
+    eng.stdin.write("position gnubg %s\nmatch length 0 cube 1 owner center\ngo move dice %d%d plies 1\n" % (pid, d1, d2))
+    eng.stdin.flush()
+    while True:
+        line = eng.stdout.readline()
+        if not line:
+            return None
+        if line.startswith("bestmove "):
+            return line[9:].strip()
+        if line.startswith("error"):
+            return None
 
 gnubg.command("set threads 1")
 gnubg.command("new session")
@@ -67,8 +87,13 @@ def invert(p):
 
 written = 0
 t0 = time.time()
+def norm(m):
+    return " ".join(sorted(m.replace("*", "").split()))
+
+
 with open(out_path, "a", buffering=1) as out:
     board = START
+    ours_game = rng.random() < ours_frac
     while written < count:
         d1, d2 = rng.randint(1, 6), rng.randint(1, 6)
         if sum(board[1]) == 15 and sum(board[0]) == 15 and board == START and d1 == d2:
@@ -98,7 +123,20 @@ with open(out_path, "a", buffering=1) as out:
         written += len(lines)
         # choose the move to continue the game
         r = rng.random()
-        if r < 0.80 or len(hint) == 1:
+        k = None
+        if ours_game and r < 0.90:
+            mv = our_best(gnubg.positionid(board), d1, d2)
+            if mv:
+                for i, h in enumerate(hint):
+                    if norm(h["move"]) == norm(mv):
+                        k = i
+                        break
+                if k is None:
+                    afters.append(apply_move(board, mv))
+                    k = len(afters) - 1
+        if k is not None:
+            pass
+        elif r < 0.80 or len(hint) == 1:
             k = 0
         elif r < 0.95:
             close = [i for i, h in enumerate(hint[:6]) if h["eqdiff"] > -0.08]
@@ -110,6 +148,7 @@ with open(out_path, "a", buffering=1) as out:
             board = START
             if rng.random() < 0.5:
                 board = (board[1], board[0])
+            ours_game = rng.random() < ours_frac
             continue
         board = (me_after, opp_after)  # opponent (index 1) now on roll
 
