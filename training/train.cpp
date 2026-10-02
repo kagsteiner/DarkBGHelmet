@@ -161,7 +161,8 @@ Args parse(int argc, char** argv) {
   return a;
 }
 
-void validate(const Network& net, const std::vector<Record>& val, const char* tag) {
+void validate(Network& net, const std::vector<Record>& val, const char* tag) {
+  net.prepare();
   double se[5] = {}, all = 0;
   long n[5] = {};
   for (const Record& r : val) {
@@ -276,6 +277,7 @@ int cmd_train(const Args& a) {
     std::snprintf(tag, sizeof tag, "ep %d", ep + 1);
     validate(net, val, tag);
     net.id = "dbgh-h" + std::to_string(net.H) + "-ep" + std::to_string(ep + 1);
+    net.prepare();
     net.save(a.pos[1]);
   }
   return 0;
