@@ -18,7 +18,7 @@ Decisions taken in review:
 | M4 | MET, cube, match play | done | Kazaross‑XG2 MET. Matches gnubg 1.08's 0‑ply cube decisions on about 99% of match positions. gnubg 1.08 effectively uses cube efficiency 0.76, so we do too. |
 | M5 | Search to 6–7 ply, rollouts | done | Cubeful multi‑state recursion; control‑variate roll sampling (k=7 costs < 0.01 equity). 6‑ply cube decision: 6 s on 4 cores. |
 | M6 | HTTP API + BGEI | done | See docs/API.md |
-| M7 | Strength loop | in progress | 512‑wide net at 1‑ply: 4.08 mEq/move vs gnubg 2‑ply, the same as gnubg 0‑ply (4.07). 2‑ply: 2.25. Match tests against gnubg are within noise of even. Labels from our own engine's games are now added to fix the gap on positions our engine reaches itself. |
+| M7 | Strength loop | in progress | Current net 512→64→64, trained on 23.9M positions (incl. 7.4M from our own engine's games). Against gnubg 2‑ply: 3.05 mEq/move at 1‑ply (gnubg 0‑ply: 4.07). Previous net vs gnubg 0‑ply: +0.066 ± 0.048 ppg (2‑ply, with cube, 3000 games); −0.013 ± 0.023 (1‑ply, cubeless). Cube decisions agree with gnubg 2‑ply on 95% (double) and 98% (take). |
 
 Deviations from the original plan:
 
