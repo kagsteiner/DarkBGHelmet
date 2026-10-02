@@ -68,7 +68,7 @@ void sample_grad(const Network& net, const Layout& L, const Record& r, float* g,
   float x[2 * kMaxHidden + 16];
   for (int j = 0; j < H; ++j) { x[j] = clamp01(acc[0][j]); x[H + j] = clamp01(acc[1][j]); }
   extra_features(r.board, x + 2 * H);
-  float z2[64], h2[64], z3[64], h3[64], y[5];
+  float z2[kMaxDense], h2[kMaxDense], z3[kMaxDense], h3[kMaxDense], y[5];
   for (int k = 0; k < L2; ++k) {
     const float* w = &net.W2[size_t(k) * in];
     float s = net.b2[k];
@@ -104,12 +104,12 @@ void sample_grad(const Network& net, const Layout& L, const Record& r, float* g,
   // Backward.
   float* gWo = g + L.Wo + size_t(head) * 5 * L3;
   float* gbo = g + L.bo + size_t(head) * 5;
-  float gh3[64] = {};
+  float gh3[kMaxDense] = {};
   for (int o = 0; o < 5; ++o) {
     gbo[o] += dzo[o];
     for (int j = 0; j < L3; ++j) { gWo[o * L3 + j] += dzo[o] * h3[j]; gh3[j] += dzo[o] * wo[o * L3 + j]; }
   }
-  float gz3[64], gh2[64] = {};
+  float gz3[kMaxDense], gh2[kMaxDense] = {};
   for (int k = 0; k < L3; ++k) gz3[k] = (z3[k] > 0.f && z3[k] < 1.f) ? gh3[k] : 0.f;
   for (int k = 0; k < L3; ++k) {
     if (gz3[k] == 0.f) continue;
@@ -118,7 +118,7 @@ void sample_grad(const Network& net, const Layout& L, const Record& r, float* g,
     const float* w = &net.W3[size_t(k) * L2];
     for (int j = 0; j < L2; ++j) { gw[j] += gz3[k] * h2[j]; gh2[j] += gz3[k] * w[j]; }
   }
-  float gz2[64];
+  float gz2[kMaxDense];
   for (int k = 0; k < L2; ++k) gz2[k] = (z2[k] > 0.f && z2[k] < 1.f) ? gh2[k] : 0.f;
   float gx[2 * kMaxHidden + 16] = {};
   for (int k = 0; k < L2; ++k) {
@@ -142,7 +142,7 @@ void sample_grad(const Network& net, const Layout& L, const Record& r, float* g,
 
 struct Args {
   std::vector<std::string> pos;
-  int hidden = 256, epochs = 12, batch = 2048, threads = 4, min_plies = -1;
+  int hidden = 256, l2 = 32, l3 = 32, epochs = 12, batch = 2048, threads = 4, min_plies = -1;
   float lr = 1e-3f, val = 0.01f;
   std::string init;
 };
@@ -153,6 +153,8 @@ Args parse(int argc, char** argv) {
     std::string s = argv[i];
     auto next = [&]() -> std::string { return i + 1 < argc ? argv[++i] : ""; };
     if (s == "--hidden") a.hidden = std::stoi(next());
+    else if (s == "--l2") a.l2 = std::stoi(next());
+    else if (s == "--l3") a.l3 = std::stoi(next());
     else if (s == "--epochs") a.epochs = std::stoi(next());
     else if (s == "--batch") a.batch = std::stoi(next());
     else if (s == "--threads") a.threads = std::stoi(next());
@@ -204,7 +206,7 @@ int cmd_train(const Args& a) {
     std::string err;
     if (!net.load(a.init, &err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; }
   } else {
-    net.init(a.hidden, 32, 32, 1);
+    net.init(a.hidden, a.l2, a.l3, 1);
   }
   const Layout L(net);
   auto szs = sizes(net);

@@ -116,7 +116,7 @@ bool Network::load(const std::string& path, std::string* err) {
     ok = ok && std::fread(v->data(), sizeof(float), v->size(), f) == v->size();
   std::fclose(f);
   if (!ok) { W1.clear(); return fail("truncated network file"); }
-  if (L2 > 64 || L3 > 64) { W1.clear(); return fail("unsupported layer sizes"); }
+  if (L2 > kMaxDense || L3 > kMaxDense) { W1.clear(); return fail("unsupported layer sizes"); }
   prepare();
   return true;
 }
@@ -233,7 +233,7 @@ Probs net_forward(const Network& net, const Accumulator& acc, int stm, const flo
   int cnt = find_positive(a, H, 0, nnz);
   cnt += find_positive(b, H, H, nnz + cnt);
   const float* w2t = net.W2T.data();
-  alignas(64) float h2[64], h3[64];
+  alignas(64) float h2[kMaxDense], h3[kMaxDense];
   auto xval = [&](int j) {
     const float v = j < H ? a[j] : b[j - H];
     return v < 1.f ? v : 1.f;
