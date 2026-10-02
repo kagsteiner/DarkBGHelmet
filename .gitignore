@@ -1,0 +1,6 @@
+build/
+data/
+*.bin
+*.bgnn.tmp
+.DS_Store
+.obsidian/workspace.json
