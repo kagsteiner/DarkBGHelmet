@@ -1,6 +1,38 @@
 # DarkBGHelmet — Backgammon Engine Plan
 
-Status: **draft for review** (2026-10-02). Nothing is implemented yet.
+Status: **implemented** (2026-10-02). Strength work (training data and network size) continues.
+Decisions taken in review:
+
+* Training: gnubg labels are used to bootstrap.
+* Ply counting: XG convention.
+* Language: C++20.
+* Code location: git repository in this folder.
+
+## Implementation status
+
+| # | Milestone | State | Notes |
+|---|---|---|---|
+| M1 | Board, move generation, position IDs | done | Move generation identical to gnubg on 5,300 random positions. About 40 M positions/s in perft. |
+| M2 | NNUE inference, bearoff DB | done | Float inference with incremental accumulators, about 1 µs per evaluation per core. The bearoff DB matches gnubg (equity RMSE 0.0005). |
+| M3 | Training pipeline | done | gnubg 2‑ply self‑play labels (14 workers, about 5 M labels/h), C++ Adam trainer, `relabel` command for expert iteration |
+| M4 | MET, cube, match play | done | Kazaross‑XG2 MET. Matches gnubg 1.08's 0‑ply cube decisions on about 99% of match positions. gnubg 1.08 effectively uses cube efficiency 0.76, so we do too. |
+| M5 | Search to 6–7 ply, rollouts | done | Cubeful multi‑state recursion; control‑variate roll sampling (k=7 costs < 0.01 equity). 6‑ply cube decision: 6 s on 4 cores. |
+| M6 | HTTP API + BGEI | done | See docs/API.md |
+| M7 | Strength loop | in progress | 512‑wide net at 1‑ply: 4.08 mEq/move vs gnubg 2‑ply, the same as gnubg 0‑ply (4.07). 2‑ply: 2.25. Match tests against gnubg are within noise of even. Labels from our own engine's games are now added to fix the gap on positions our engine reaches itself. |
+
+Deviations from the original plan:
+
+* **Inference is float32, not int8.** The clamped accumulators are about 70% zero, so a
+  sparse float layer was as fast as an int8 dot product would be.
+* **No Star2 pruning.** Root move filters plus control‑variate sampling at deep chance layers
+  gave the needed speed-up. Star2's bounds are too loose in backgammon's value space to
+  prune much.
+* **Rollout variance reduction is off by default.** It lowers variance about 16×, but costs
+  about 21× per trial with 1‑ply move choice.
+* **Not done yet:**
+  * the learned cube-efficiency head (it needs cubeful rollout labels)
+  * an exact two‑sided bearoff database
+  * a MET generator
 
 ---
 
