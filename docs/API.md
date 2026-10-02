@@ -36,6 +36,7 @@ bgserver --port 8080 --threads 16 --net nets/latest.bgnn --plies 3
 | POST | `/v1/move` | Ranked checker plays for the given dice |
 | POST | `/v1/cube` | Cube action: double / no double / too good, take / pass / beaver |
 | POST | `/v1/analyze` | Cube analysis plus, if dice are given, the checker play analysis |
+| POST | `/v1/rollout` | Monte Carlo rollout of the position or, with dice, of the best candidate plays |
 
 ### Request
 
@@ -134,6 +135,22 @@ The response contains:
   * `match_equity`: `{cubeless, cubeful}` as MWC
   * `match`: `{length, away, crawford, cube, owner}`
 
+### `/v1/rollout`
+
+`options` for rollouts:
+
+| Option | Meaning |
+|---|---|
+| `trials` | Number of games, default 1296. The first two rolls are stratified, so multiples of 1296 work best |
+| `truncate` | Stop after this many plies and use the static evaluation (0 = play to the end) |
+| `cubeful` | Play with the cube (default) or cubeless |
+| `variance_reduction` | Dahl-style luck removal: about 16x lower variance, about 21x the cost per trial |
+| `candidates` | With dice: how many of the best 1-ply plays to roll out |
+
+The response contains `probabilities`, `cubeless_equity`, `cubeful_equity` and `std_error`, plus
+`mwc` in match play. With dice, one such object is returned per candidate play, under `moves`.
+The cubeful value of a position rollout assumes the player on roll does not double first.
+
 ### Errors
 
 * Malformed requests return HTTP 400 with `{"error": "..."}`.
@@ -156,6 +173,7 @@ stdout, one per line:
 | `go move dice <d1d2> [plies n]` | `info rank … move … equity … diff … plies …` lines, then `bestmove <move>` |
 | `go cube [plies n]` | `bestcube <decision>; take <take\|pass\|beaver>; nd … dt … dp …` |
 | `go eval [plies n]` | `eval win … wg … wbg … lg … lbg … cubeless … cubeful …` |
+| `go rollout [dice d1d2] [trials n] [truncate t]` | One `rollout <move\|position> win … cubeful … se … trials …` line per candidate |
 | `json <request>` | One line: the `/v1/analyze` JSON response |
 | `quit` | Exits |
 

@@ -9,6 +9,7 @@
 //   go move dice <d1d2> [plies n]   -> info ... lines, then "bestmove <move>"
 //   go cube [plies n]               -> "bestcube <decision>; nd .. dt .. dp .."
 //   go eval [plies n]               -> "eval win .. wg .. wbg .. lg .. lbg .. equity .."
+//   go rollout [dice d1d2] [trials n] [truncate t] -> "rollout <move|position> ..." lines
 //   json <request>                  -> one line of JSON (the HTTP /v1/analyze answer)
 //   quit
 #include <cstdio>
@@ -93,6 +94,8 @@ int main(int argc, char** argv) {
         while (is >> k) {
           if (k == "dice") { std::string d; is >> d; req["dice"] = {d[0] - '0', d[1] - '0'}; }
           else if (k == "plies") { int v; is >> v; req["options"]["plies"] = v; }
+          else if (k == "trials") { int v; is >> v; req["options"]["trials"] = v; }
+          else if (k == "truncate") { int v; is >> v; req["options"]["truncate"] = v; }
         }
         if (what == "move") {
           json r = engine.move(req);
@@ -108,6 +111,19 @@ int main(int argc, char** argv) {
           std::printf("bestcube %s; take %s; nd %.4f dt %.4f dp %.4f\n", r["decision"].get<std::string>().c_str(),
                       r["take"].get<std::string>().c_str(), r["equity"]["no_double"].get<double>(),
                       r["equity"]["double_take"].get<double>(), r["equity"]["double_pass"].get<double>());
+        } else if (what == "rollout") {
+          json r = engine.rollout(req);
+          auto line = [](const json& x, const std::string& tag) {
+            const json& p = x["probabilities"];
+            std::printf("rollout %s win %.4f wg %.4f wbg %.4f lg %.4f lbg %.4f cubeless %.4f cubeful %.4f se %.4f trials %d\n",
+                        tag.c_str(), p["win"].get<double>(), p["win_gammon"].get<double>(),
+                        p["win_backgammon"].get<double>(), p["lose_gammon"].get<double>(),
+                        p["lose_backgammon"].get<double>(), x.value("cubeless_equity", 0.0),
+                        x["cubeful_equity"].get<double>(), x.contains("std_error") ? x["std_error"]["cubeful"].get<double>() : 0.0,
+                        x["trials"].get<int>());
+          };
+          if (r.contains("moves")) for (const auto& m : r["moves"]) line(m, m["move"].get<std::string>());
+          else line(r, "position");
         } else if (what == "eval") {
           json r = engine.evaluate(req);
           const json& p = r["probabilities"];

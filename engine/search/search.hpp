@@ -87,6 +87,7 @@ class Searcher {
   ~Searcher();
 
   void set_threads(int threads);
+  ThreadPool& pool() { return pool_; }
   int threads() const { return pool_.size(); }
   void clear_cache();
 
