@@ -223,64 +223,90 @@ inline int find_positive(const float* a, int n, int base, uint16_t* out) {
 
 }  // namespace
 
+namespace {
+
+// First dense layer over the sparse accumulator inputs (input-major weights).
+template <int N>
+void layer2(const Network& net, const float* a, const float* b, const uint16_t* nnz, int cnt, const float* extra,
+            float* h2) {
+  const int H = net.H;
+  const float* w2t = net.W2T.data();
+  float t[N];
+  for (int k = 0; k < N; ++k) t[k] = net.b2[k];
+  for (int q = 0; q < cnt; ++q) {
+    const int j = nnz[q];
+    float xj = j < H ? a[j] : b[j - H];
+    xj = xj < 1.f ? xj : 1.f;
+    const float* w = w2t + size_t(j) * N;
+    for (int k = 0; k < N; ++k) t[k] += xj * w[k];
+  }
+  for (int e = 0; e < net.E; ++e) {
+    const float xj = extra[e];
+    const float* w = w2t + size_t(2 * H + e) * N;
+    for (int k = 0; k < N; ++k) t[k] += xj * w[k];
+  }
+  for (int k = 0; k < N; ++k) h2[k] = clamp01(t[k]);
+}
+
+void layer2_generic(const Network& net, const float* a, const float* b, const uint16_t* nnz, int cnt,
+                    const float* extra, float* h2) {
+  const int H = net.H, L2 = net.L2;
+  const float* w2t = net.W2T.data();
+  for (int k = 0; k < L2; ++k) h2[k] = net.b2[k];
+  for (int q = 0; q < cnt; ++q) {
+    const int j = nnz[q];
+    float xj = j < H ? a[j] : b[j - H];
+    xj = xj < 1.f ? xj : 1.f;
+    const float* w = w2t + size_t(j) * L2;
+    for (int k = 0; k < L2; ++k) h2[k] += xj * w[k];
+  }
+  for (int e = 0; e < net.E; ++e) {
+    const float* w = w2t + size_t(2 * H + e) * L2;
+    for (int k = 0; k < L2; ++k) h2[k] += extra[e] * w[k];
+  }
+  for (int k = 0; k < L2; ++k) h2[k] = clamp01(h2[k]);
+}
+
+// Second dense layer, input-major over the non-zero h2 entries.
+template <int N>
+void layer3(const Network& net, const float* h2, float* h3) {
+  const float* w3t = net.W3T.data();
+  float t[N];
+  for (int k = 0; k < N; ++k) t[k] = net.b3[k];
+  for (int j = 0; j < net.L2; ++j) {
+    const float xj = h2[j];
+    if (xj == 0.f) continue;
+    const float* w = w3t + size_t(j) * N;
+    for (int k = 0; k < N; ++k) t[k] += xj * w[k];
+  }
+  for (int k = 0; k < N; ++k) h3[k] = clamp01(t[k]);
+}
+
+}  // namespace
+
 Probs net_forward(const Network& net, const Accumulator& acc, int stm, const float* extra, int head) {
-  const int H = net.H, L2 = net.L2, L3 = net.L3;
+  const int H = net.H, L3 = net.L3;
   const float* a = acc.v[stm];
   const float* b = acc.v[1 - stm];
-  // Sparse first dense layer: only positive (unclamped-to-zero) accumulator
-  // entries contribute; the weight rows are input-major (W2T).
+  // Only positive accumulator entries survive the clamp; collect their indices.
   alignas(64) uint16_t nnz[2 * kMaxHidden + 8];
   int cnt = find_positive(a, H, 0, nnz);
   cnt += find_positive(b, H, H, nnz + cnt);
-  const float* w2t = net.W2T.data();
   alignas(64) float h2[kMaxDense], h3[kMaxDense];
-  auto xval = [&](int j) {
-    const float v = j < H ? a[j] : b[j - H];
-    return v < 1.f ? v : 1.f;
-  };
-  if (L2 == 32) {
-    float t[32];
-    for (int k = 0; k < 32; ++k) t[k] = net.b2[k];
-    for (int q = 0; q < cnt; ++q) {
-      const int j = nnz[q];
-      const float xj = xval(j);
-      const float* w = w2t + size_t(j) * 32;
-      for (int k = 0; k < 32; ++k) t[k] += xj * w[k];
-    }
-    for (int e = 0; e < net.E; ++e) {
-      const float xj = extra[e];
-      const float* w = w2t + size_t(2 * H + e) * 32;
-      for (int k = 0; k < 32; ++k) t[k] += xj * w[k];
-    }
-    for (int k = 0; k < 32; ++k) h2[k] = clamp01(t[k]);
-  } else {
-    for (int k = 0; k < L2; ++k) h2[k] = net.b2[k];
-    for (int q = 0; q < cnt; ++q) {
-      const int j = nnz[q];
-      const float xj = xval(j);
-      const float* w = w2t + size_t(j) * L2;
-      for (int k = 0; k < L2; ++k) h2[k] += xj * w[k];
-    }
-    for (int e = 0; e < net.E; ++e) {
-      const float* w = w2t + size_t(2 * H + e) * L2;
-      for (int k = 0; k < L2; ++k) h2[k] += extra[e] * w[k];
-    }
-    for (int k = 0; k < L2; ++k) h2[k] = clamp01(h2[k]);
+  switch (net.L2) {
+    case 32: layer2<32>(net, a, b, nnz, cnt, extra, h2); break;
+    case 64: layer2<64>(net, a, b, nnz, cnt, extra, h2); break;
+    case 96: layer2<96>(net, a, b, nnz, cnt, extra, h2); break;
+    case 128: layer2<128>(net, a, b, nnz, cnt, extra, h2); break;
+    default: layer2_generic(net, a, b, nnz, cnt, extra, h2);
   }
-  // Second dense layer, input-major over non-zero h2.
-  const float* w3t = net.W3T.data();
-  if (L3 == 32) {
-    float t[32];
-    for (int k = 0; k < 32; ++k) t[k] = net.b3[k];
-    for (int j = 0; j < L2; ++j) {
-      const float xj = h2[j];
-      if (xj == 0.f) continue;
-      const float* w = w3t + size_t(j) * 32;
-      for (int k = 0; k < 32; ++k) t[k] += xj * w[k];
-    }
-    for (int k = 0; k < 32; ++k) h3[k] = clamp01(t[k]);
-  } else {
-    for (int j = 0; j < L3; ++j) h3[j] = clamp01(net.b3[j] + dot(&net.W3[size_t(j) * L2], h2, L2));
+  switch (L3) {
+    case 32: layer3<32>(net, h2, h3); break;
+    case 64: layer3<64>(net, h2, h3); break;
+    case 96: layer3<96>(net, h2, h3); break;
+    case 128: layer3<128>(net, h2, h3); break;
+    default:
+      for (int j = 0; j < L3; ++j) h3[j] = clamp01(net.b3[j] + dot(&net.W3[size_t(j) * net.L2], h2, net.L2));
   }
   Probs p;
   const float* wo = &net.Wo[size_t(head) * 5 * L3];
