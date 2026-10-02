@@ -30,6 +30,7 @@ struct Network {
   std::vector<float> Wo, bo;  // [heads][5][L3], [heads][5]
   std::string id = "untrained";
   std::vector<float> W2T;     // [2H+E][L2], derived from W2 by prepare() for fast inference
+  std::vector<float> W3T;     // [L2][L3], derived from W3
 
   int in2() const { return 2 * H + E; }
   void init(int hidden, int l2, int l3, unsigned seed);

@@ -5,6 +5,10 @@
 #include <cstring>
 #include <random>
 
+#if defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
+
 namespace bg {
 
 namespace {
@@ -46,6 +50,9 @@ void Network::prepare() {
   W2T.resize(size_t(in) * L2);
   for (int k = 0; k < L2; ++k)
     for (int j = 0; j < in; ++j) W2T[size_t(j) * L2 + k] = W2[size_t(k) * in + j];
+  W3T.resize(size_t(L2) * L3);
+  for (int k = 0; k < L3; ++k)
+    for (int j = 0; j < L2; ++j) W3T[size_t(j) * L3 + k] = W3[size_t(k) * L2 + j];
 }
 
 void Network::init(int hidden, int l2, int l3, unsigned seed) {
@@ -128,8 +135,11 @@ void acc_refresh(const Network& net, const Board& b, Accumulator& acc) {
 void acc_update(const Network& net, const Board& parent, const Accumulator& pa, const Board& child,
                 Accumulator& ca) {
   const int H = net.H;
-  std::memcpy(ca.v[0], pa.v[0], sizeof(float) * H);
-  std::memcpy(ca.v[1], pa.v[1], sizeof(float) * H);
+  // Collect the weight rows to add/subtract per perspective, then write each
+  // child accumulator in a single fused pass.
+  const float* add[2][64];
+  const float* sub[2][64];
+  int na[2] = {0, 0}, ns[2] = {0, 0};
   for (int p = 0; p < 2; ++p) {
     const u128 a = parent.side[p], c = child.side[p];
     u128 diff = a ^ c;
@@ -138,8 +148,8 @@ void acc_update(const Network& net, const Board& parent, const Accumulator& pa, 
       for (int k = lo + 1; k <= hi; ++k) {
         const float* w_own = &net.W1[size_t(feature_index(0, slot, k)) * H];
         const float* w_oth = &net.W1[size_t(feature_index(1, slot, k)) * H];
-        if (on) { add_row(ca.v[p], w_own, H); add_row(ca.v[1 - p], w_oth, H); }
-        else { sub_row(ca.v[p], w_own, H); sub_row(ca.v[1 - p], w_oth, H); }
+        if (on) { add[p][na[p]++] = w_own; add[1 - p][na[1 - p]++] = w_oth; }
+        else { sub[p][ns[p]++] = w_own; sub[1 - p][ns[1 - p]++] = w_oth; }
       }
     };
     while (diff) {
@@ -153,50 +163,129 @@ void acc_update(const Network& net, const Board& parent, const Accumulator& pa, 
     if (off_c > off_a) toggle(25, off_a, off_c, true);
     else if (off_c < off_a) toggle(25, off_c, off_a, false);
   }
+  for (int p = 0; p < 2; ++p) {
+    const float* src = pa.v[p];
+    float* dst = ca.v[p];
+    if (na[p] + ns[p] > 60) {  // cannot happen for a single play, but stay safe
+      acc_refresh(net, child, ca);
+      return;
+    }
+    for (int i = 0; i < H; i += 16) {
+      float t[16];
+      for (int j = 0; j < 16; ++j) t[j] = src[i + j];
+      for (int r = 0; r < na[p]; ++r) {
+        const float* w = add[p][r] + i;
+        for (int j = 0; j < 16; ++j) t[j] += w[j];
+      }
+      for (int r = 0; r < ns[p]; ++r) {
+        const float* w = sub[p][r] + i;
+        for (int j = 0; j < 16; ++j) t[j] -= w[j];
+      }
+      for (int j = 0; j < 16; ++j) dst[i + j] = t[j];
+    }
+  }
 }
 
+namespace {
+
+// Indices of the positive entries of a[0..n) (n multiple of 4), offset by `base`.
+inline int find_positive(const float* a, int n, int base, uint16_t* out) {
+  int cnt = 0;
+#if defined(__ARM_NEON)
+  static const struct Lut {
+    uint16_t idx[16][4];
+    Lut() {
+      for (int m = 0; m < 16; ++m) {
+        int k = 0;
+        for (int b = 0; b < 4; ++b)
+          if (m & (1 << b)) idx[m][k++] = uint16_t(b);
+        for (; k < 4; ++k) idx[m][k] = 0;
+      }
+    }
+  } lut;
+  const float32x4_t zero = vdupq_n_f32(0.f);
+  const uint32x4_t bits = {1, 2, 4, 8};
+  for (int i = 0; i < n; i += 4) {
+    const uint32x4_t gt = vcgtq_f32(vld1q_f32(a + i), zero);
+    const unsigned m = vaddvq_u32(vandq_u32(gt, bits));
+    const uint16x4_t idx = vadd_u16(vld1_u16(lut.idx[m]), vdup_n_u16(uint16_t(base + i)));
+    vst1_u16(out + cnt, idx);
+    cnt += __builtin_popcount(m);
+  }
+#else
+  for (int i = 0; i < n; ++i) {
+    out[cnt] = uint16_t(base + i);
+    cnt += a[i] > 0.f;
+  }
+#endif
+  return cnt;
+}
+
+}  // namespace
+
 Probs net_forward(const Network& net, const Accumulator& acc, int stm, const float* extra, int head) {
-  const int H = net.H, in = net.in2();
-  alignas(64) float x[2 * kMaxHidden + 16];
+  const int H = net.H, L2 = net.L2, L3 = net.L3;
   const float* a = acc.v[stm];
   const float* b = acc.v[1 - stm];
-  for (int i = 0; i < H; ++i) x[i] = clamp01(a[i]);
-  for (int i = 0; i < H; ++i) x[H + i] = clamp01(b[i]);
-  for (int e = 0; e < net.E; ++e) x[2 * H + e] = extra[e];
-  alignas(64) float h2[64], h3[64];
-  // Input-major accumulation over the non-zero inputs only (the clamped
-  // accumulators are sparse); the fixed 32-wide inner loop vectorises fully.
-  const int L2 = net.L2;
+  // Sparse first dense layer: only positive (unclamped-to-zero) accumulator
+  // entries contribute; the weight rows are input-major (W2T).
+  alignas(64) uint16_t nnz[2 * kMaxHidden + 8];
+  int cnt = find_positive(a, H, 0, nnz);
+  cnt += find_positive(b, H, H, nnz + cnt);
   const float* w2t = net.W2T.data();
-  int nnz[2 * kMaxHidden + 16];
-  int cnt = 0;
-  for (int j = 0; j < in; ++j) {
-    nnz[cnt] = j;
-    cnt += x[j] != 0.f;
-  }
+  alignas(64) float h2[64], h3[64];
+  auto xval = [&](int j) {
+    const float v = j < H ? a[j] : b[j - H];
+    return v < 1.f ? v : 1.f;
+  };
   if (L2 == 32) {
-    float acc[32];
-    for (int k = 0; k < 32; ++k) acc[k] = net.b2[k];
-    for (int t = 0; t < cnt; ++t) {
-      const float xj = x[nnz[t]];
-      const float* w = w2t + size_t(nnz[t]) * 32;
-      for (int k = 0; k < 32; ++k) acc[k] += xj * w[k];
+    float t[32];
+    for (int k = 0; k < 32; ++k) t[k] = net.b2[k];
+    for (int q = 0; q < cnt; ++q) {
+      const int j = nnz[q];
+      const float xj = xval(j);
+      const float* w = w2t + size_t(j) * 32;
+      for (int k = 0; k < 32; ++k) t[k] += xj * w[k];
     }
-    for (int k = 0; k < 32; ++k) h2[k] = acc[k];
+    for (int e = 0; e < net.E; ++e) {
+      const float xj = extra[e];
+      const float* w = w2t + size_t(2 * H + e) * 32;
+      for (int k = 0; k < 32; ++k) t[k] += xj * w[k];
+    }
+    for (int k = 0; k < 32; ++k) h2[k] = clamp01(t[k]);
   } else {
     for (int k = 0; k < L2; ++k) h2[k] = net.b2[k];
-    for (int t = 0; t < cnt; ++t) {
-      const float xj = x[nnz[t]];
-      const float* w = w2t + size_t(nnz[t]) * L2;
+    for (int q = 0; q < cnt; ++q) {
+      const int j = nnz[q];
+      const float xj = xval(j);
+      const float* w = w2t + size_t(j) * L2;
       for (int k = 0; k < L2; ++k) h2[k] += xj * w[k];
     }
+    for (int e = 0; e < net.E; ++e) {
+      const float* w = w2t + size_t(2 * H + e) * L2;
+      for (int k = 0; k < L2; ++k) h2[k] += extra[e] * w[k];
+    }
+    for (int k = 0; k < L2; ++k) h2[k] = clamp01(h2[k]);
   }
-  for (int k = 0; k < L2; ++k) h2[k] = clamp01(h2[k]);
-  for (int j = 0; j < net.L3; ++j) h3[j] = clamp01(net.b3[j] + dot(&net.W3[size_t(j) * net.L2], h2, net.L2));
+  // Second dense layer, input-major over non-zero h2.
+  const float* w3t = net.W3T.data();
+  if (L3 == 32) {
+    float t[32];
+    for (int k = 0; k < 32; ++k) t[k] = net.b3[k];
+    for (int j = 0; j < L2; ++j) {
+      const float xj = h2[j];
+      if (xj == 0.f) continue;
+      const float* w = w3t + size_t(j) * 32;
+      for (int k = 0; k < 32; ++k) t[k] += xj * w[k];
+    }
+    for (int k = 0; k < 32; ++k) h3[k] = clamp01(t[k]);
+  } else {
+    for (int j = 0; j < L3; ++j) h3[j] = clamp01(net.b3[j] + dot(&net.W3[size_t(j) * L2], h2, L2));
+  }
   Probs p;
-  const float* wo = &net.Wo[size_t(head) * 5 * net.L3];
+  const float* wo = &net.Wo[size_t(head) * 5 * L3];
   const float* bo = &net.bo[size_t(head) * 5];
-  for (int o = 0; o < 5; ++o) p[o] = sigmoid(bo[o] + dot(wo + o * net.L3, h3, net.L3));
+  for (int o = 0; o < 5; ++o) p[o] = sigmoid(bo[o] + dot(wo + o * L3, h3, L3));
   p.sanitize();
   return p;
 }
