@@ -35,6 +35,9 @@ target_link_libraries(bgengine PUBLIC Threads::Threads)
 add_executable(bgcli engine/cli/main.cpp)
 target_link_libraries(bgcli bgengine)
 
+add_executable(bgei engine/cli/bgei.cpp)
+target_link_libraries(bgei bgengine)
+
 if(EXISTS ${CMAKE_SOURCE_DIR}/engine/server/main.cpp)
   add_executable(bgserver engine/server/main.cpp)
   target_link_libraries(bgserver bgengine)
