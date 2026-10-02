@@ -18,9 +18,13 @@ THREADS = os.environ.get("BG_THREADS", "2")
 NET = os.environ.get("BG_NET", "nets/latest.bgnn")
 LOG = os.environ.get("BG_LOG", "")
 ENGINE = os.environ.get("BG_ENGINE", "build/bgei")
+NOCUBE = os.environ.get("BG_NOCUBE", "0") == "1"
+STATS = {"our_dbl": 0, "gnu_dbl": 0, "our_pass": 0, "gnu_pass": 0}
 
 gnubg.command("set threads 1")
 gnubg.command("new session")
+if os.environ.get("BG_NOCUBE", "0") == "1":
+    gnubg.command("set jacoby off")
 START = gnubg.positionfromid("4HPwATDgc/ABMA")
 
 eng = subprocess.Popen([ENGINE, "--net", NET, "--threads", THREADS], stdin=subprocess.PIPE,
@@ -118,7 +122,7 @@ def send(cmd):
 
 def our_setup(board, cube, owner_rel):
     send("position gnubg " + gnubg.positionid(board))
-    send("match length 0 cube %d owner %s" % (cube, xg_owner(owner_rel)))
+    send("match length 0 cube %d owner %s jacoby %d" % (cube, xg_owner(owner_rel), 0 if NOCUBE else 1))
 
 
 def our_move(board, d1, d2, cube, owner_rel):
@@ -153,19 +157,23 @@ def play_game(rng_seed, ours_first):
         else:
             orel = 0 if owner_ours == ours_to_move else 1
         # cube action (not before the very first roll)
-        if not first and orel != 1:
+        if not first and orel != 1 and not NOCUBE:
             if ours_to_move:
                 dbl, _ = our_cube(board, cube, orel)
                 if dbl:
+                    STATS["our_dbl"] += 1
                     _, take = gnu_cube(board, cube, orel)  # gnubg as taker: evaluate from doubler's view
                     if not take:
+                        STATS["gnu_pass"] += 1
                         return cube
                     cube *= 2; owner_ours = False
             else:
                 dbl, _ = gnu_cube(board, cube, orel)
                 if dbl:
+                    STATS["gnu_dbl"] += 1
                     _, take = our_cube(board, cube, orel)
                     if not take:
+                        STATS["our_pass"] += 1
                         return -cube
                     cube *= 2; owner_ours = True
         first = False
@@ -201,7 +209,7 @@ for g in range(GAMES // 2):
     n += 1
     mean = total / (2 * n)
     se = math.sqrt(max(0.0, sq / n - (total / (2 * n)) ** 2) / n) if n > 1 else 0.0
-    msg = "pairs %d games %d  DBGH ppg %+.3f  (se %.3f)  last %+d %+d" % (n, 2 * n, mean, se, a, b)
+    msg = "pairs %d games %d  DBGH ppg %+.3f  (se %.3f)  last %+d %+d  %s" % (n, 2 * n, mean, se, a, b, STATS)
     sys.stderr.write(msg + "\n")
     if logf:
         logf.write(msg + "\n"); logf.flush()
