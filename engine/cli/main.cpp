@@ -12,6 +12,8 @@
 #include "core/movegen.hpp"
 #include "eval/evaluator.hpp"
 #include <cmath>
+#include <map>
+#include "eval/cube.hpp"
 
 using namespace bg;
 
@@ -120,6 +122,63 @@ int main(int argc, char** argv) {
     const char* names[5] = {"over", "bearoff", "race", "contact", "crashed"};
     for (int c = 0; c < 5; ++c)
       if (cls_n[c]) std::printf("  %-8s n=%-8ld rmse %.4f\n", names[c], cls_n[c], std::sqrt(cls_se[c] / cls_n[c]));
+    return 0;
+  }
+  if (cmd == "checkcube") {
+    // Compares our cube model with gnubg (tools/gnubg_cubecheck.py output on stdin).
+    char pid[32];
+    int len, s0, s1, cube, owner, crw;
+    float q[5], gnd, gdt, gdp;
+    struct Acc { double nd = 0, dt = 0; long n = 0, agree = 0; };
+    std::map<std::string, Acc> by;
+    while (std::scanf(" C %31s %d %d %d %d %d %d %f %f %f %f %f %f %f %f", pid, &len, &s0, &s1, &cube, &owner, &crw,
+                      &q[0], &q[1], &q[2], &q[3], &q[4], &gnd, &gdt, &gdp) == 15) {
+      Board b;
+      if (!parse_position_id(pid, b)) continue;
+      MatchState ms;
+      ms.length = len;
+      ms.score[0] = s0;
+      ms.score[1] = s1;
+      ms.cube = cube;
+      ms.owner = owner < 0 ? CubeOwner::Center : (owner == 0 ? CubeOwner::Me : CubeOwner::Opp);
+      ms.crawford = crw != 0;
+      ms.beavers = false;
+      Probs p;
+      for (int i = 0; i < 5; ++i) p[i] = q[i];
+      CubeAnalysis a = analyze_cube(p, ms, cube_efficiency(b));
+      CubeModel cm(ms);
+      // gnubg reports the optimal value (max of ND and the doubled branch), not ND.
+      double dnd = cm.to_emg(a.can_double ? std::max(a.nd, std::min(a.dt, a.dp)) : a.nd) - gnd;
+      double ddt = cm.to_emg(a.dt) - gdt;
+      // gnubg decision from its numbers with the same rule
+      auto decide = [](float nd, float dt, float dp) {
+        float d = std::min(dt, dp);
+        if (d > nd) return dt <= dp ? 1 : 2;
+        if (nd > dp) return 3;
+        return 0;
+      };
+      int ours = a.can_double ? decide(cm.to_emg(a.nd), cm.to_emg(a.dt), cm.to_emg(a.dp)) : -1;
+      // From gnubg's optimal value: doubled if it equals min(DT,DP).
+      int theirs = -1;
+      if (a.can_double) {
+        float d = std::min(gdt, gdp);
+        bool dbl = std::fabs(gnd - d) < 1e-5f && gnd >= 0.f - 10.f;
+        theirs = dbl ? (gdt <= gdp ? 1 : 2) : (ours == 3 ? 3 : 0);
+        if (ours == 3 && !dbl && gnd <= gdp) theirs = 0;
+      }
+      if (ours == 3) ours = 0;  // gnubg's optimal value cannot distinguish too-good from no double
+      if (theirs == 3) theirs = 0;
+      char key[64];
+      std::snprintf(key, sizeof key, "len %2d score %2d-%2d cube %d owner %2d crw %d", len, s0, s1, cube, owner, crw);
+      if (std::getenv("BG_DEBUG") && std::fabs(ddt) > 0.04)
+        std::printf("DBG %s %s cls %d x %.3f pips %d/%d w %.4f ourDT %.4f gnubgDT %.4f\n", key, pid, int(classify(b)),
+                    cube_efficiency(b), b.pips(0), b.pips(1), p[0], cm.to_emg(a.dt), gdt);
+      Acc& ac = by[key];
+      ac.nd += dnd * dnd; ac.dt += ddt * ddt; ac.n++; ac.agree += ours == theirs;
+    }
+    for (auto& [k, ac] : by)
+      std::printf("%s  n=%ld  OPT rmse %.4f  DT rmse %.4f  decision agree %.1f%%\n", k.c_str(), ac.n,
+                  std::sqrt(ac.nd / ac.n), std::sqrt(ac.dt / ac.n), 100.0 * ac.agree / ac.n);
     return 0;
   }
   if (cmd == "eval" && argc >= 3) {
