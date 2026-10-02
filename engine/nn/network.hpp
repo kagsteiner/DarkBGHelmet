@@ -29,12 +29,15 @@ struct Network {
   std::vector<float> W3, b3;  // [L3][L2], [L3]
   std::vector<float> Wo, bo;  // [heads][5][L3], [heads][5]
   std::string id = "untrained";
+  std::vector<float> W2T;     // [2H+E][L2], derived from W2 by prepare() for fast inference
 
   int in2() const { return 2 * H + E; }
   void init(int hidden, int l2, int l3, unsigned seed);
   bool load(const std::string& path, std::string* err = nullptr);
   bool save(const std::string& path) const;
   bool empty() const { return W1.empty(); }
+  void prepare();  // must be called after changing W2
+
 };
 
 struct alignas(64) Accumulator {

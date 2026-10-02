@@ -16,7 +16,7 @@ class Evaluator {
  public:
   // Loads the network (if the file exists) and the bearoff database.
   bool init(const std::string& net_path, const std::string& data_dir, std::string* err = nullptr);
-  void set_network(const Network& n) { net_ = n; }
+  void set_network(const Network& n) { net_ = n; net_.prepare(); }
   const Network& network() const { return net_; }
   bool has_network() const { return !net_.empty(); }
 

@@ -41,6 +41,13 @@ constexpr u32 kVersion = 1;
 
 }  // namespace
 
+void Network::prepare() {
+  const int in = in2();
+  W2T.resize(size_t(in) * L2);
+  for (int k = 0; k < L2; ++k)
+    for (int j = 0; j < in; ++j) W2T[size_t(j) * L2 + k] = W2[size_t(k) * in + j];
+}
+
 void Network::init(int hidden, int l2, int l3, unsigned seed) {
   H = hidden; L2 = l2; L3 = l3; E = kExtraFeatures; heads = kHeads;
   std::mt19937 rng(seed);
@@ -58,6 +65,7 @@ void Network::init(int hidden, int l2, int l3, unsigned seed) {
   fill(Wo, size_t(heads) * 5 * L3, std::sqrt(6.f / (L3 + 5)));
   bo.assign(size_t(heads) * 5, 0.f);
   id = "random";
+  prepare();
 }
 
 bool Network::save(const std::string& path) const {
@@ -101,6 +109,8 @@ bool Network::load(const std::string& path, std::string* err) {
     ok = ok && std::fread(v->data(), sizeof(float), v->size(), f) == v->size();
   std::fclose(f);
   if (!ok) { W1.clear(); return fail("truncated network file"); }
+  if (L2 > 64 || L3 > 64) { W1.clear(); return fail("unsupported layer sizes"); }
+  prepare();
   return true;
 }
 
@@ -154,7 +164,34 @@ Probs net_forward(const Network& net, const Accumulator& acc, int stm, const flo
   for (int i = 0; i < H; ++i) x[H + i] = clamp01(b[i]);
   for (int e = 0; e < net.E; ++e) x[2 * H + e] = extra[e];
   alignas(64) float h2[64], h3[64];
-  for (int j = 0; j < net.L2; ++j) h2[j] = clamp01(net.b2[j] + dot(&net.W2[size_t(j) * in], x, in));
+  // Input-major accumulation over the non-zero inputs only (the clamped
+  // accumulators are sparse); the fixed 32-wide inner loop vectorises fully.
+  const int L2 = net.L2;
+  const float* w2t = net.W2T.data();
+  int nnz[2 * kMaxHidden + 16];
+  int cnt = 0;
+  for (int j = 0; j < in; ++j) {
+    nnz[cnt] = j;
+    cnt += x[j] != 0.f;
+  }
+  if (L2 == 32) {
+    float acc[32];
+    for (int k = 0; k < 32; ++k) acc[k] = net.b2[k];
+    for (int t = 0; t < cnt; ++t) {
+      const float xj = x[nnz[t]];
+      const float* w = w2t + size_t(nnz[t]) * 32;
+      for (int k = 0; k < 32; ++k) acc[k] += xj * w[k];
+    }
+    for (int k = 0; k < 32; ++k) h2[k] = acc[k];
+  } else {
+    for (int k = 0; k < L2; ++k) h2[k] = net.b2[k];
+    for (int t = 0; t < cnt; ++t) {
+      const float xj = x[nnz[t]];
+      const float* w = w2t + size_t(nnz[t]) * L2;
+      for (int k = 0; k < L2; ++k) h2[k] += xj * w[k];
+    }
+  }
+  for (int k = 0; k < L2; ++k) h2[k] = clamp01(h2[k]);
   for (int j = 0; j < net.L3; ++j) h3[j] = clamp01(net.b3[j] + dot(&net.W3[size_t(j) * net.L2], h2, net.L2));
   Probs p;
   const float* wo = &net.Wo[size_t(head) * 5 * net.L3];

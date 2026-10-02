@@ -16,6 +16,7 @@
 #include <cmath>
 #include <map>
 #include "eval/cube.hpp"
+#include "eval/features.hpp"
 #include "search/search.hpp"
 
 using namespace bg;
@@ -182,6 +183,54 @@ int main(int argc, char** argv) {
     for (auto& [k, ac] : by)
       std::printf("%s  n=%ld  OPT rmse %.4f  DT rmse %.4f  decision agree %.1f%%\n", k.c_str(), ac.n,
                   std::sqrt(ac.nd / ac.n), std::sqrt(ac.dt / ac.n), 100.0 * ac.agree / ac.n);
+    return 0;
+  }
+  if (cmd == "speed") {
+    // Single-thread throughput of move generation + incremental evaluation.
+    Evaluator ev;
+    std::string err;
+    if (!ev.init(argc > 2 ? argv[2] : "nets/latest.bgnn", "data", &err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; }
+    std::mt19937_64 rng(3);
+    std::vector<Board> pos;
+    std::vector<Move> moves;
+    while (pos.size() < 2000) {
+      Board b = Board::start();
+      int plies = int(rng() % 60);
+      for (int i = 0; i < plies && b.winner() < 0; ++i) {
+        generate_moves(b, int(rng() % 6) + 1, int(rng() % 6) + 1, moves);
+        b = moves[rng() % moves.size()].after.swapped();
+      }
+      if (b.winner() < 0 && b.contact()) pos.push_back(b);
+    }
+    std::vector<Probs> probs;
+    u64 evals = 0, gens = 0;
+    auto t0 = std::chrono::steady_clock::now();
+    for (const Board& b : pos)
+      for (int d1 = 1; d1 <= 6; ++d1)
+        for (int d2 = d1; d2 <= 6; ++d2) {
+          generate_moves(b, d1, d2, moves);
+          ++gens;
+        }
+    auto t1 = std::chrono::steady_clock::now();
+    for (const Board& b : pos)
+      for (int d1 = 1; d1 <= 6; ++d1)
+        for (int d2 = d1; d2 <= 6; ++d2) {
+          generate_moves(b, d1, d2, moves);
+          ev.evaluate_moves(b, moves, probs);
+          evals += moves.size();
+        }
+    auto t2 = std::chrono::steady_clock::now();
+    double g = std::chrono::duration<double>(t1 - t0).count(), e = std::chrono::duration<double>(t2 - t1).count();
+    std::printf("movegen: %.2f us/roll   movegen+eval: %.3f us/eval (%.0f evals/s/thread, %.1f moves/roll)\n",
+                1e6 * g / gens, 1e6 * (e) / evals, evals / e, double(evals) / gens);
+    // Component costs.
+    float ex[kExtraFeatures];
+    auto t3 = std::chrono::steady_clock::now();
+    double sink = 0;
+    for (int r = 0; r < 20; ++r)
+      for (const Board& b : pos) { extra_features(b, ex); sink += ex[3]; }
+    auto t4 = std::chrono::steady_clock::now();
+    std::printf("extra features: %.3f us   (sink %.1f)\n", 1e6 * std::chrono::duration<double>(t4 - t3).count() / (20 * pos.size()), sink);
     return 0;
   }
   if (cmd == "bench" && argc >= 3) {
