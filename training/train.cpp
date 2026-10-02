@@ -13,9 +13,13 @@
 #include <random>
 #include <string>
 #include <thread>
+#include <mutex>
 #include <vector>
 
+#include "core/ids.hpp"
 #include "dataset.hpp"
+#include "eval/evaluator.hpp"
+#include "search/search.hpp"
 #include "eval/features.hpp"
 #include "nn/network.hpp"
 
@@ -283,6 +287,57 @@ int cmd_train(const Args& a) {
   return 0;
 }
 
+// Expert iteration: relabel positions with our own (deeper) search.
+//   bgtrain relabel <out.txt> --net nets/latest.bgnn --plies 3 --threads 16 --max N <label files...>
+int cmd_relabel(const Args& a, const std::string& net_path, int plies, size_t max_n) {
+  if (a.pos.size() < 2) { std::fprintf(stderr, "relabel <out.txt> <label files...>\n"); return 1; }
+  Evaluator ev;
+  std::string err;
+  if (!ev.init(net_path, "data", &err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; }
+  std::vector<std::string> files(a.pos.begin() + 1, a.pos.end());
+  std::vector<Record> recs = load_labels(files, -1);
+  std::mt19937_64 rng(777);
+  std::shuffle(recs.begin(), recs.end(), rng);
+  if (max_n && recs.size() > max_n) recs.resize(max_n);
+  std::printf("relabelling %zu positions at %d-ply with %s\n", recs.size(), plies, ev.network().id.c_str());
+  FILE* out = std::fopen(a.pos[0].c_str(), "a");
+  if (!out) return 1;
+  std::mutex mu;
+  std::atomic<size_t> next{0}, done{0};
+  auto t0 = std::chrono::steady_clock::now();
+  std::vector<std::thread> th;
+  for (int t = 0; t < std::max(1, a.threads); ++t)
+    th.emplace_back([&]() {
+      Searcher s(ev, 1, 64);
+      MatchState ms;
+      std::string buf;
+      for (size_t i; (i = next.fetch_add(1)) < recs.size();) {
+        Probs p = s.evaluate(recs[i].board, ms, plies);
+        char line[160];
+        std::snprintf(line, sizeof line, "%s %d %.6f %.6f %.6f %.6f %.6f\n", position_id(recs[i].board).c_str(),
+                      100 + plies, p[0], p[1], p[2], p[3], p[4]);
+        buf += line;
+        size_t d = done.fetch_add(1) + 1;
+        if (buf.size() > 16384 || d == recs.size()) {
+          std::lock_guard<std::mutex> g(mu);
+          std::fputs(buf.c_str(), out);
+          std::fflush(out);
+          buf.clear();
+        }
+        if (d % 20000 == 0) {
+          double el = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+          std::printf("  %zu / %zu  (%.0f pos/s)\n", d, recs.size(), d / el);
+          std::fflush(stdout);
+        }
+      }
+      std::lock_guard<std::mutex> g(mu);
+      std::fputs(buf.c_str(), out);
+    });
+  for (auto& x : th) x.join();
+  std::fclose(out);
+  return 0;
+}
+
 int cmd_build(const Args& a) {
   if (a.pos.size() < 2) { std::fprintf(stderr, "build <out.bin> files...\n"); return 1; }
   std::vector<std::string> files(a.pos.begin() + 1, a.pos.end());
@@ -306,6 +361,20 @@ int main(int argc, char** argv) {
   Args a = parse(argc, argv);
   if (cmd == "build") return cmd_build(a);
   if (cmd == "train") return cmd_train(a);
+  if (cmd == "relabel") {
+    std::string net = "nets/latest.bgnn";
+    int plies = 3;
+    size_t max_n = 0;
+    Args b = a;
+    b.pos.clear();
+    for (size_t i = 0; i < a.pos.size(); ++i) {
+      if (a.pos[i] == "--net" && i + 1 < a.pos.size()) net = a.pos[++i];
+      else if (a.pos[i] == "--plies" && i + 1 < a.pos.size()) plies = std::stoi(a.pos[++i]);
+      else if (a.pos[i] == "--max" && i + 1 < a.pos.size()) max_n = std::stoul(a.pos[++i]);
+      else b.pos.push_back(a.pos[i]);
+    }
+    return cmd_relabel(b, net, plies, max_n);
+  }
   std::fprintf(stderr, "unknown command %s\n", cmd.c_str());
   return 1;
 }
