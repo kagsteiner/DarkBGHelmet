@@ -4,3 +4,5 @@ data/
 *.bgnn.tmp
 .DS_Store
 .obsidian/workspace.json
+nets/*
+!nets/latest.bgnn

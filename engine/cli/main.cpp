@@ -5,6 +5,8 @@
 #include <cstdio>
 #include <cstring>
 #include <random>
+#include <atomic>
+#include <thread>
 #include <string>
 #include <vector>
 
@@ -180,6 +182,83 @@ int main(int argc, char** argv) {
     for (auto& [k, ac] : by)
       std::printf("%s  n=%ld  OPT rmse %.4f  DT rmse %.4f  decision agree %.1f%%\n", k.c_str(), ac.n,
                   std::sqrt(ac.nd / ac.n), std::sqrt(ac.dt / ac.n), 100.0 * ac.agree / ac.n);
+    return 0;
+  }
+  if (cmd == "bench" && argc >= 3) {
+    // bgcli bench <benchfile> [plies] [net] [threads]
+    // Scores our checker play against gnubg 2-ply equities (tools/gnubg_bench.py).
+    int plies = argc > 3 ? std::atoi(argv[3]) : 1;
+    std::string net = argc > 4 ? argv[4] : "nets/latest.bgnn";
+    int threads = argc > 5 ? std::atoi(argv[5]) : int(std::thread::hardware_concurrency());
+    Evaluator ev;
+    std::string err;
+    if (!ev.init(net, "data", &err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; }
+    struct Item { Board b; int d1, d2; std::vector<std::pair<std::string, float>> moves; std::string best0; };
+    std::vector<Item> items;
+    FILE* f = std::fopen(argv[2], "r");
+    if (!f) return 1;
+    static char line[1 << 17];
+    while (std::fgets(line, sizeof line, f)) {
+      std::string s(line);
+      while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back();
+      size_t tab = s.find('\t');
+      if (tab == std::string::npos) continue;
+      Item it;
+      it.best0 = s.substr(tab + 1);
+      std::string head = s.substr(0, tab);
+      size_t p1 = head.find(' '), p2 = head.find(' ', p1 + 1), p3 = head.find(' ', p2 + 1);
+      if (!parse_position_id(head.substr(0, p1), it.b)) continue;
+      it.d1 = head[p1 + 1] - '0';
+      it.d2 = head[p1 + 2] - '0';
+      std::string list = head.substr(p3 + 1);
+      size_t a = 0;
+      while (a < list.size()) {
+        size_t e = list.find('|', a);
+        if (e == std::string::npos) e = list.size();
+        std::string tok = list.substr(a, e - a);
+        size_t eq = tok.rfind('=');
+        it.moves.push_back({tok.substr(0, eq), std::stof(tok.substr(eq + 1))});
+        a = e + 1;
+      }
+      items.push_back(it);
+    }
+    std::fclose(f);
+    std::vector<double> loss(items.size(), 0), loss0(items.size(), 0);
+    std::vector<int> ok(items.size(), 0);
+    std::atomic<size_t> next{0};
+    auto t0 = std::chrono::steady_clock::now();
+    std::vector<std::thread> th;
+    for (int t = 0; t < threads; ++t)
+      th.emplace_back([&]() {
+        Searcher s(ev, 1, 32);
+        SearchConfig cfg = SearchConfig::for_plies(plies);
+        MatchState ms;
+        std::vector<Move> legal;
+        for (size_t i; (i = next.fetch_add(1)) < items.size();) {
+          const Item& it = items[i];
+          MoveAnalysis a = s.analyze_moves(it.b, it.d1, it.d2, ms, cfg);
+          generate_moves(it.b, it.d1, it.d2, legal);
+          int ours = find_move(legal, it.b, a.moves[0].move.str());
+          float best = it.moves[0].second, eq = -1e9f, eq0 = -1e9f;
+          for (auto& [mv, e] : it.moves) {
+            int k = find_move(legal, it.b, mv);
+            if (k == ours) eq = e;
+            if (mv == it.best0) eq0 = e;
+          }
+          if (eq < -1e8f || eq0 < -1e8f) continue;
+          ok[i] = 1;
+          loss[i] = best - eq;
+          loss0[i] = best - eq0;
+        }
+      });
+    for (auto& x : th) x.join();
+    double s = 0, s0 = 0, blunders = 0;
+    int n = 0;
+    for (size_t i = 0; i < items.size(); ++i)
+      if (ok[i]) { s += loss[i]; s0 += loss0[i]; n++; blunders += loss[i] > 0.08; }
+    double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    std::printf("positions %d  ours (%d-ply): avg loss %.2f mEq  blunders(>80mEq) %.1f%%   gnubg 0-ply: %.2f mEq   (%.1fs)\n", n,
+                plies, 1000 * s / n, 100 * blunders / n, 1000 * s0 / n, secs);
     return 0;
   }
   if ((cmd == "move" || cmd == "cube") && argc >= 3) {
