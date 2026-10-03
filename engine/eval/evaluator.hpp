@@ -27,6 +27,13 @@ class Evaluator {
   // out[i] is from the mover's view. Uses incremental accumulator updates.
   void evaluate_moves(const Board& b, const std::vector<Move>& moves, std::vector<Probs>& out) const;
 
+  // Cube efficiency for the cube states (centered, owned by the player on roll,
+  // owned by the opponent). Uses the network's cube head when present and
+  // enabled, otherwise the fixed formula (cube_efficiency).
+  void cube_x(const Board& b, float x[3]) const;
+  void set_use_cube_head(bool on) { use_cube_head_ = on; }
+  bool cube_head_active() const { return use_cube_head_ && net_.has_cube_head(); }
+
   // Probabilities of a finished game from the view of board side 0 (the winner
   // is whoever has no checkers left).
   static Probs terminal(const Board& b);
@@ -35,6 +42,7 @@ class Evaluator {
   Probs eval_net(const Board& b, const Accumulator& acc, int stm) const;
   Probs heuristic(const Board& b) const;
   Network net_;
+  bool use_cube_head_ = true;
 };
 
 }  // namespace bg
