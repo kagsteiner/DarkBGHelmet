@@ -6,3 +6,4 @@ data/
 .obsidian/workspace.json
 nets/*
 !nets/latest.bgnn
+!nets/iter1.bgnn

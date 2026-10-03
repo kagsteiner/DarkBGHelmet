@@ -1,6 +1,6 @@
 // bgplay: play against the engine in a terminal.
 //
-//   bgplay [--net nets/iter1.bgnn] [--plies 3] [--cube-extra 2] [--match 7] [--dice manual] [--threads 4]
+//   bgplay [--net nets/latest.bgnn] [--plies 3] [--cube-extra 2] [--match 7] [--dice manual] [--threads 4]
 //   --cube-extra n: cube decisions search n plies deeper than checker play (0 = off)
 //
 // You are X (moving from your 24 point down to your 1 point). Moves use gnubg
@@ -71,7 +71,7 @@ std::string mirror(const std::string& m) {
 }  // namespace
 
 int main(int argc, char** argv) {
-  std::string net = "nets/iter1.bgnn";
+  std::string net = "nets/latest.bgnn";
   int plies = 3, match = 0, threads = 4, cube_extra = 2;
   bool manual_dice = false;
   for (int i = 1; i < argc; ++i) {
