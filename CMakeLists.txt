@@ -38,6 +38,9 @@ target_link_libraries(bgcli bgengine)
 add_executable(bgei engine/cli/bgei.cpp)
 target_link_libraries(bgei bgengine)
 
+add_executable(bgplay engine/cli/play.cpp)
+target_link_libraries(bgplay bgengine)
+
 if(EXISTS ${CMAKE_SOURCE_DIR}/engine/server/main.cpp)
   add_executable(bgserver engine/server/main.cpp)
   target_link_libraries(bgserver bgengine)
