@@ -1,6 +1,7 @@
 // bgplay: play against the engine in a terminal.
 //
-//   bgplay [--net nets/iter1.bgnn] [--plies 3] [--match 7] [--dice manual] [--threads 4]
+//   bgplay [--net nets/iter1.bgnn] [--plies 3] [--cube-extra 2] [--match 7] [--dice manual] [--threads 4]
+//   --cube-extra n: cube decisions search n plies deeper than checker play (0 = off)
 //
 // You are X (moving from your 24 point down to your 1 point). Moves use gnubg
 // notation from the mover's own side ("13/7 8/7", "bar/22*", "6/off(2)"); the
@@ -71,18 +72,19 @@ std::string mirror(const std::string& m) {
 
 int main(int argc, char** argv) {
   std::string net = "nets/iter1.bgnn";
-  int plies = 3, match = 0, threads = 4;
+  int plies = 3, match = 0, threads = 4, cube_extra = 2;
   bool manual_dice = false;
   for (int i = 1; i < argc; ++i) {
     std::string a = argv[i];
     auto next = [&]() -> std::string { return i + 1 < argc ? argv[++i] : ""; };
     if (a == "--net") net = next();
     else if (a == "--plies") plies = std::stoi(next());
+    else if (a == "--cube-extra") cube_extra = std::max(0, std::stoi(next()));
     else if (a == "--match") match = std::stoi(next());
     else if (a == "--threads") threads = std::stoi(next());
     else if (a == "--dice") manual_dice = next() == "manual";
     else {
-      std::fprintf(stderr, "usage: bgplay [--net file] [--plies n] [--match n] [--dice manual|auto] [--threads n]\n");
+      std::fprintf(stderr, "usage: bgplay [--net file] [--plies n] [--cube-extra n] [--match n] [--dice manual|auto] [--threads n]\n");
       return 1;
     }
   }
@@ -91,9 +93,11 @@ int main(int argc, char** argv) {
   if (!ev.init(net, "data", &err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; }
   Searcher search(ev, threads);
   const SearchConfig cfg = SearchConfig::for_plies(plies);
+  const SearchConfig cube_cfg = SearchConfig::for_plies(std::min(7, plies + cube_extra));
   std::mt19937 rng(std::random_device{}());
 
-  std::cout << "DarkBGHelmet (" << ev.network().id << ", " << plies << "-ply). You are X.\n"
+  std::cout << "DarkBGHelmet (" << ev.network().id << ", " << plies << "-ply checker play, "
+            << std::min(7, plies + cube_extra) << "-ply cube decisions). You are X.\n"
             << "Commands on your turn: roll / double (before rolling), a move like '13/7 8/7', 'moves' (list legal),\n"
             << "'hint' (engine's suggestion), 'resign', 'quit'.\n";
 
@@ -150,7 +154,7 @@ int main(int argc, char** argv) {
           if (c == "quit") return 0;
           if (c == "resign") { winner = 1; points = msh.cube; break; }
           if (can_double && (c == "double" || c == "d")) {
-            CubeResult r = search.analyze_cube(hb, msh, cfg);  // from your view; 'take' = engine's answer
+            CubeResult r = search.analyze_cube(hb, msh, cube_cfg);  // from your view; 'take' = engine's answer
             if (!r.analysis.take) {
               std::cout << "Engine passes.\n";
               winner = 0;
@@ -211,7 +215,7 @@ int main(int argc, char** argv) {
         Board eb = hb.swapped();
         MatchState mse = msh.swapped();
         if (!opening && mse.owner != CubeOwner::Opp && CubeModel(mse).can_double(0, mse.cube)) {
-          CubeResult r = search.analyze_cube(eb, mse, cfg);
+          CubeResult r = search.analyze_cube(eb, mse, cube_cfg);
           const CubeDecision d = r.analysis.decision;
           if (d == CubeDecision::DoubleTake || d == CubeDecision::DoublePass) {
             show(hb, msh, msh.cube);
