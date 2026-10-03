@@ -253,40 +253,76 @@ int main(int argc, char** argv) {
   }
   if (cmd == "duel" && argc >= 5) {
     // bgcli duel <netA> <netB> <games> [pliesA] [pliesB] [threads]
-    // Cubeless money games (gammons count), duplicate pairs: the same dice are
-    // replayed with the roles swapped. Reports points per game for A.
+    // Money games, duplicate pairs (same dice, roles swapped). Points per game for A.
+    // Environment: BG_DUEL_CUBE=1 plays with the cube (Jacoby on unless BG_JACOBY=0);
+    // BG_A_NOHEAD=1 / BG_B_NOHEAD=1 make that side use the cube formula instead of
+    // the network's cube head; BG_CUBE_EXTRA=n adds plies for cube decisions.
     Evaluator ea, eb;
     std::string err;
     if (!ea.init(argv[2], "data", &err) || !eb.init(argv[3], "data", &err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; }
+    auto env = [](const char* k) { const char* v = std::getenv(k); return v ? std::atoi(v) : 0; };
+    if (env("BG_A_NOHEAD")) ea.set_use_cube_head(false);
+    if (env("BG_B_NOHEAD")) eb.set_use_cube_head(false);
+    const bool cube = env("BG_DUEL_CUBE") != 0;
+    const bool jacoby = cube && (std::getenv("BG_JACOBY") ? env("BG_JACOBY") != 0 : true);
+    const int extra = env("BG_CUBE_EXTRA");
     const int pairs = std::max(1, std::atoi(argv[4]) / 2);
     const int pa = argc > 5 ? std::atoi(argv[5]) : 1, pb = argc > 6 ? std::atoi(argv[6]) : 1;
     const int threads = argc > 7 ? std::atoi(argv[7]) : int(std::thread::hardware_concurrency());
     std::vector<double> res(pairs, 0);
     std::atomic<int> next{0};
+    std::atomic<long> doubles{0}, passes{0};
     auto t0 = std::chrono::steady_clock::now();
     std::vector<std::thread> th;
     for (int t = 0; t < threads; ++t)
       th.emplace_back([&]() {
         Searcher sa(ea, 1, 16), sb(eb, 1, 16);
-        MatchState ms;
-        ms.jacoby = false;
         SearchConfig ca = SearchConfig::for_plies(pa), cb = SearchConfig::for_plies(pb);
-        ca.cubeful = cb.cubeful = false;
+        SearchConfig qa = SearchConfig::for_plies(std::min(7, pa + extra)), qb = SearchConfig::for_plies(std::min(7, pb + extra));
+        ca.cubeful = cb.cubeful = cube;
         for (int i; (i = next.fetch_add(1)) < pairs;) {
           double sum = 0;
           for (int g = 0; g < 2; ++g) {
             std::mt19937_64 rng(1000003ULL * i + 17);
             Board b = Board::start();
             bool a_to_move = g == 0;
-            bool first = true;
+            bool first = true, turned = false;
+            int cubev = 1;
+            int owner = -1;  // -1 centered, 0 = A owns, 1 = B owns
             for (;;) {
+              Searcher& sx = a_to_move ? sa : sb;
+              Searcher& sy = a_to_move ? sb : sa;
+              const int me = a_to_move ? 0 : 1;
+              MatchState ms;
+              ms.jacoby = jacoby;
+              ms.beavers = false;
+              ms.cube = cubev;
+              ms.owner = owner < 0 ? CubeOwner::Center : (owner == me ? CubeOwner::Me : CubeOwner::Opp);
+              if (cube && !first && ms.owner != CubeOwner::Opp && CubeModel(ms).can_double(0, cubev)) {
+                CubeResult r = sx.analyze_cube(b, ms, a_to_move ? qa : qb);
+                const CubeDecision d = r.analysis.decision;
+                if (d == CubeDecision::DoubleTake || d == CubeDecision::DoublePass) {
+                  doubles++;
+                  CubeResult ry = sy.analyze_cube(b, ms, a_to_move ? qb : qa);
+                  if (!ry.analysis.take) {
+                    passes++;
+                    sum += a_to_move ? cubev : -cubev;
+                    break;
+                  }
+                  cubev *= 2;
+                  owner = 1 - me;
+                  turned = true;
+                  ms.cube = cubev;
+                  ms.owner = CubeOwner::Opp;
+                }
+              }
               int d1 = int(rng() % 6) + 1, d2 = int(rng() % 6) + 1;
               while (first && d1 == d2) { d1 = int(rng() % 6) + 1; d2 = int(rng() % 6) + 1; }
               first = false;
-              MoveAnalysis an = a_to_move ? sa.analyze_moves(b, d1, d2, ms, ca) : sb.analyze_moves(b, d1, d2, ms, cb);
+              MoveAnalysis an = sx.analyze_moves(b, d1, d2, ms, a_to_move ? ca : cb);
               const Board after = an.moves[0].move.after;
               if (after.side[0] == 0) {
-                int pts = int(after.result_for_winner(0));
+                int pts = (jacoby && !turned ? 1 : int(after.result_for_winner(0))) * cubev;
                 sum += a_to_move ? pts : -pts;
                 break;
               }
@@ -303,8 +339,10 @@ int main(int argc, char** argv) {
     m /= pairs;
     for (double r : res) v += (r - m) * (r - m);
     double se = std::sqrt(v / (pairs - 1 > 0 ? pairs - 1 : 1) / pairs);
-    std::printf("duel %s (%d-ply) vs %s (%d-ply): %d games, A ppg %+.4f (se %.4f)  %.0fs\n", argv[2], pa, argv[3], pb,
-                2 * pairs, m, se, std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
+    std::printf("duel %s%s (%d-ply) vs %s%s (%d-ply)%s: %d games, A ppg %+.4f (se %.4f)  doubles %ld passes %ld  %.0fs\n",
+                argv[2], env("BG_A_NOHEAD") ? "[formula]" : "", pa, argv[3], env("BG_B_NOHEAD") ? "[formula]" : "", pb,
+                cube ? " with cube" : "", 2 * pairs, m, se, doubles.load(), passes.load(),
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
     return 0;
   }
   if (cmd == "speed") {

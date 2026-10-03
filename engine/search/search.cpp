@@ -193,10 +193,12 @@ float Searcher::child_optimal(const Root& R, int cp, const float* v, int nd, int
 void Searcher::leaf_values(const Root& R, const Board& P, const Probs& p, int parity, const StateSet& S,
                            float* v) const {
   const CubeModel& cm = R.cm[parity];
-  const float x = cube_efficiency(P);
+  float xs[3] = {0.76f, 0.76f, 0.76f};
+  if (R.cfg.cubeful) ev_.cube_x(P, xs);  // (centered, owned, opponent owns)
   for (int i = 0; i < S.n; ++i) {
     const CubeState& s = S.s[i];
     if (R.cfg.cubeful) {
+      const float x = xs[s.owner == CubeOwner::Center ? 0 : (s.owner == CubeOwner::Me ? 1 : 2)];
       v[i] = cm.cubeful(p, s.cube, s.owner, x);
     } else {
       const bool jac = R.money && cm.state().jacoby && s.owner == CubeOwner::Center && s.cube == 1;

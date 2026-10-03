@@ -2,6 +2,8 @@
 
 #include <cmath>
 
+#include "eval/cube.hpp"
+
 namespace bg {
 
 bool Evaluator::init(const std::string& net_path, const std::string& data_dir, std::string* err) {
@@ -54,6 +56,22 @@ Probs Evaluator::evaluate(const Board& b) const {
   Accumulator acc;
   acc_refresh(net_, b, acc);
   return eval_net(b, acc, 0);
+}
+
+void Evaluator::cube_x(const Board& b, float x[3]) const {
+  const PosClass cls = classify(b);
+  if (!cube_head_active() || cls == PosClass::Over || cls == PosClass::Bearoff) {
+    x[0] = x[1] = x[2] = cube_efficiency(b);
+    return;
+  }
+  Accumulator acc;
+  acc_refresh(net_, b, acc);
+  float extra[kExtraFeatures];
+  extra_features(b, extra);
+  float h3[kMaxDense];
+  const int head = head_for(cls);
+  const Probs p = net_forward(net_, acc, 0, extra, head, h3);
+  net_cube_x(net_, h3, p, head, x);
 }
 
 void Evaluator::evaluate_moves(const Board& b, const std::vector<Move>& moves, std::vector<Probs>& out) const {

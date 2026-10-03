@@ -33,6 +33,16 @@ struct Network {
   std::vector<float> W2T;     // [2H+E][L2], derived from W2 by prepare() for fast inference
   std::vector<float> W3T;     // [L2][L3], derived from W3
 
+  // Optional cube head (file version 2): per class, [h3, 5 probs] -> C (clamped)
+  // -> 3 outputs = cube efficiency for the cube states centered / owned by the
+  // player on roll / owned by the opponent, x = kCubeXMin + kCubeXSpan * sigmoid(z).
+  int C = 0;
+  std::vector<float> Wc1, bc1;  // [heads][C][L3+5], [heads][C]
+  std::vector<float> Wc2, bc2;  // [heads][3][C], [heads][3]
+  int cin() const { return L3 + 5; }
+  bool has_cube_head() const { return C > 0; }
+  void init_cube_head(int hidden, unsigned seed);
+
   int in2() const { return 2 * H + E; }
   void init(int hidden, int l2, int l3, unsigned seed);
   bool load(const std::string& path, std::string* err = nullptr);
@@ -53,6 +63,12 @@ void acc_update(const Network& net, const Board& parent, const Accumulator& pa, 
 
 // Evaluates with board side `stm` on roll. `extra` = extra_features of the board
 // seen from stm. Returns sanitized probabilities from stm's view.
-Probs net_forward(const Network& net, const Accumulator& acc, int stm, const float* extra, int head);
+// If h3_out is given it receives the last hidden layer (L3 values).
+Probs net_forward(const Network& net, const Accumulator& acc, int stm, const float* extra, int head,
+                  float* h3_out = nullptr);
+
+constexpr float kCubeXMin = 0.3f, kCubeXSpan = 0.9f;
+// Cube efficiencies from the cube head for (centered, owned, opponent owns).
+void net_cube_x(const Network& net, const float* h3, const Probs& p, int head, float x[3]);
 
 }  // namespace bg

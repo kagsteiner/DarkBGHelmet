@@ -41,7 +41,7 @@ inline int ctz128(u128 x) {
 }
 
 constexpr u32 kMagic = 0x4E4E4742;  // "BGNN"
-constexpr u32 kVersion = 1;
+constexpr u32 kVersion = 2;  // 2 = optional cube head after the main weights
 
 }  // namespace
 
@@ -53,6 +53,21 @@ void Network::prepare() {
   W3T.resize(size_t(L2) * L3);
   for (int k = 0; k < L3; ++k)
     for (int j = 0; j < L2; ++j) W3T[size_t(j) * L3 + k] = W3[size_t(k) * L2 + j];
+}
+
+void Network::init_cube_head(int hidden, unsigned seed) {
+  C = hidden;
+  std::mt19937 rng(seed);
+  auto fill = [&](std::vector<float>& v, size_t n, float a) {
+    std::uniform_real_distribution<float> u(-a, a);
+    v.resize(n);
+    for (auto& x : v) x = u(rng);
+  };
+  fill(Wc1, size_t(heads) * C * cin(), std::sqrt(6.f / (cin() + C)));
+  bc1.assign(size_t(heads) * C, 0.f);
+  fill(Wc2, size_t(heads) * 3 * C, 0.05f);
+  // Start at x = 0.76 (sigmoid^-1((0.76 - 0.3) / 0.9) ~ 0.045).
+  bc2.assign(size_t(heads) * 3, 0.045f);
 }
 
 void Network::init(int hidden, int l2, int l3, unsigned seed) {
@@ -86,6 +101,10 @@ bool Network::save(const std::string& path) const {
   std::fwrite(&idlen, sizeof idlen, 1, f);
   std::fwrite(id.data(), 1, idlen, f);
   for (const auto* v : {&W1, &b1, &W2, &b2, &W3, &b3, &Wo, &bo}) std::fwrite(v->data(), sizeof(float), v->size(), f);
+  int32_t c = C;
+  std::fwrite(&c, sizeof c, 1, f);
+  if (C > 0)
+    for (const auto* v : {&Wc1, &bc1, &Wc2, &bc2}) std::fwrite(v->data(), sizeof(float), v->size(), f);
   bool ok = std::ferror(f) == 0;
   std::fclose(f);
   return ok;
@@ -98,7 +117,7 @@ bool Network::load(const std::string& path, std::string* err) {
   u32 hdr[2];
   int32_t dims[5];
   u32 idlen = 0;
-  bool ok = std::fread(hdr, sizeof hdr, 1, f) == 1 && hdr[0] == kMagic && hdr[1] == kVersion &&
+  bool ok = std::fread(hdr, sizeof hdr, 1, f) == 1 && hdr[0] == kMagic && (hdr[1] == 1 || hdr[1] == 2) &&
             std::fread(dims, sizeof dims, 1, f) == 1 && std::fread(&idlen, sizeof idlen, 1, f) == 1 && idlen < 4096;
   if (!ok) { std::fclose(f); return fail("bad network header"); }
   if (dims[0] <= 0 || dims[0] > kMaxHidden || dims[1] != kExtraFeatures || dims[4] != kHeads) {
@@ -114,6 +133,18 @@ bool Network::load(const std::string& path, std::string* err) {
   Wo.resize(size_t(heads) * 5 * L3); bo.resize(size_t(heads) * 5);
   for (auto* v : {&W1, &b1, &W2, &b2, &W3, &b3, &Wo, &bo})
     ok = ok && std::fread(v->data(), sizeof(float), v->size(), f) == v->size();
+  C = 0;
+  if (ok && hdr[1] >= 2) {
+    int32_t c = 0;
+    ok = std::fread(&c, sizeof c, 1, f) == 1 && c >= 0 && c <= 256;
+    if (ok && c > 0) {
+      C = c;
+      Wc1.resize(size_t(heads) * C * cin()); bc1.resize(size_t(heads) * C);
+      Wc2.resize(size_t(heads) * 3 * C); bc2.resize(size_t(heads) * 3);
+      for (auto* v : {&Wc1, &bc1, &Wc2, &bc2})
+        ok = ok && std::fread(v->data(), sizeof(float), v->size(), f) == v->size();
+    }
+  }
   std::fclose(f);
   if (!ok) { W1.clear(); return fail("truncated network file"); }
   if (L2 > kMaxDense || L3 > kMaxDense) { W1.clear(); return fail("unsupported layer sizes"); }
@@ -284,7 +315,7 @@ void layer3(const Network& net, const float* h2, float* h3) {
 
 }  // namespace
 
-Probs net_forward(const Network& net, const Accumulator& acc, int stm, const float* extra, int head) {
+Probs net_forward(const Network& net, const Accumulator& acc, int stm, const float* extra, int head, float* h3_out) {
   const int H = net.H, L3 = net.L3;
   const float* a = acc.v[stm];
   const float* b = acc.v[1 - stm];
@@ -308,12 +339,29 @@ Probs net_forward(const Network& net, const Accumulator& acc, int stm, const flo
     default:
       for (int j = 0; j < L3; ++j) h3[j] = clamp01(net.b3[j] + dot(&net.W3[size_t(j) * net.L2], h2, net.L2));
   }
+  if (h3_out) std::memcpy(h3_out, h3, sizeof(float) * L3);
   Probs p;
   const float* wo = &net.Wo[size_t(head) * 5 * L3];
   const float* bo = &net.bo[size_t(head) * 5];
   for (int o = 0; o < 5; ++o) p[o] = sigmoid(bo[o] + dot(wo + o * L3, h3, L3));
   p.sanitize();
   return p;
+}
+
+void net_cube_x(const Network& net, const float* h3, const Probs& p, int head, float x[3]) {
+  const int C = net.C, in = net.cin(), L3 = net.L3;
+  float u[256];
+  const float* w1 = &net.Wc1[size_t(head) * C * in];
+  const float* b1 = &net.bc1[size_t(head) * C];
+  for (int k = 0; k < C; ++k) {
+    const float* w = w1 + size_t(k) * in;
+    float s = b1[k] + dot(w, h3, L3);
+    for (int i = 0; i < 5; ++i) s += w[L3 + i] * p[i];
+    u[k] = clamp01(s);
+  }
+  const float* w2 = &net.Wc2[size_t(head) * 3 * C];
+  const float* b2 = &net.bc2[size_t(head) * 3];
+  for (int o = 0; o < 3; ++o) x[o] = kCubeXMin + kCubeXSpan * sigmoid(b2[o] + dot(w2 + o * C, u, C));
 }
 
 }  // namespace bg
