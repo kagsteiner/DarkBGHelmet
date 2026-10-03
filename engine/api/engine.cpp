@@ -45,6 +45,7 @@ json Engine::info() const {
           {"network", ev_.network().id},
           {"threads", search_ ? search_->threads() : 0},
           {"default_plies", opts_.default_plies},
+          {"cube_extra_plies", opts_.cube_extra_plies},
           {"max_plies", opts_.max_plies},
           {"ply_convention", "XG (1-ply = static evaluation)"},
           {"position_formats", {"xgid", "gnubg", "points"}},
@@ -125,6 +126,18 @@ SearchConfig Engine::parse_options(const json& req) const {
   return cfg;
 }
 
+SearchConfig Engine::parse_cube_options(const json& req) const {
+  SearchConfig base = parse_options(req);
+  json o = req.contains("options") ? req["options"] : json::object();
+  int extra = o.contains("cube_extra_plies") ? o["cube_extra_plies"].get<int>() : opts_.cube_extra_plies;
+  int plies = o.contains("cube_plies") ? o["cube_plies"].get<int>() : base.plies + std::max(0, extra);
+  plies = std::clamp(plies, 1, opts_.max_plies);
+  SearchConfig cfg = SearchConfig::for_plies(plies);
+  cfg.cubeful = base.cubeful;
+  if (o.contains("sampled_rolls")) cfg.sampled_rolls = base.sampled_rolls;
+  return cfg;
+}
+
 json Engine::position_json(const Position& p) const {
   return {{"gnubg", position_id(p.board) + ":" + match_id(p.match, p.dice[0], p.dice[1])}, {"xgid", to_xgid(p)}};
 }
@@ -148,7 +161,7 @@ json Engine::cube_json(const CubeResult& r, const Position& p) const {
 
 json Engine::evaluate(const json& req) {
   Position p = parse_request(req);
-  SearchConfig cfg = parse_options(req);
+  SearchConfig cfg = parse_cube_options(req);
   std::lock_guard<std::mutex> g(mutex_);
   CubeResult r = search_->analyze_cube(p.board, p.match, cfg);
   CubeModel cm(p.match);
@@ -175,7 +188,7 @@ json Engine::evaluate(const json& req) {
 
 json Engine::cube(const json& req) {
   Position p = parse_request(req);
-  SearchConfig cfg = parse_options(req);
+  SearchConfig cfg = parse_cube_options(req);
   std::lock_guard<std::mutex> g(mutex_);
   CubeResult r = search_->analyze_cube(p.board, p.match, cfg);
   json out = cube_json(r, p);

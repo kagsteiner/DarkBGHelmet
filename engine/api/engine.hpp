@@ -20,6 +20,7 @@ struct EngineOptions {
   int threads = 0;        // 0 = all cores
   size_t hash_mb = 256;
   int default_plies = 3;
+  int cube_extra_plies = 2;  // cube decisions search this many plies deeper (0 = same depth)
   int max_plies = 7;
 };
 
@@ -46,6 +47,9 @@ class Engine {
   // Parses position + match + dice from a request.
   Position parse_request(const nlohmann::json& req) const;
   SearchConfig parse_options(const nlohmann::json& req) const;
+  // Depth for cube decisions: options.cube_plies, else plies + cube_extra_plies.
+  SearchConfig parse_cube_options(const nlohmann::json& req) const;
+  void set_cube_extra_plies(int n) { opts_.cube_extra_plies = std::max(0, n); }
 
  private:
   nlohmann::json position_json(const Position& p) const;

@@ -75,6 +75,8 @@ bgserver --port 8080 --threads 16 --net nets/latest.bgnn --plies 3
 | Option | Meaning |
 |---|---|
 | `plies` | Search depth, 1..7 |
+| `cube_extra_plies` | Cube decisions (`/v1/cube`, `/v1/evaluate`) search this many plies deeper than `plies`. Default 2 (server flag `--cube-extra`); 0 = same depth |
+| `cube_plies` | Exact depth for cube decisions (overrides `cube_extra_plies`) |
 | `cubeful` | Cubeful (default) or cubeless search |
 | `candidates` | Maximum number of plays searched at full depth |
 | `max_moves` | Maximum number of plays returned |
@@ -167,7 +169,7 @@ stdout, one per line:
 |---|---|
 | `bgei` | `id name …`, `id network …`, `option …` lines, then `bgeiok` |
 | `isready` | `readyok` |
-| `setoption name Threads\|Plies\|Net value <v>` | (none, or `error …`) |
+| `setoption name Threads\|Plies\|Net\|CubeExtraPlies value <v>` | (none, or `error …`) |
 | `position start` / `position xgid <XGID>` / `position gnubg <posid>[:<matchid>]` | (none) |
 | `match length <n> score <a> <b> cube <c> owner <center\|onroll\|opponent> crawford <0\|1>` | (none) |
 | `go move dice <d1d2> [plies n]` | `info rank … move … equity … diff … plies …` lines, then `bestmove <move>` |

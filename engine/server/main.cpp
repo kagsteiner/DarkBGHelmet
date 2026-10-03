@@ -1,5 +1,5 @@
 // bgserver: HTTP JSON API for the engine.
-//   bgserver [--port 8080] [--host 127.0.0.1] [--net nets/latest.bgnn] [--threads N] [--plies 3]
+//   bgserver [--port 8080] [--host 127.0.0.1] [--net nets/latest.bgnn] [--threads N] [--plies 3] [--cube-extra 2]
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -22,6 +22,7 @@ int main(int argc, char** argv) {
     else if (a == "--data") o.data_dir = next();
     else if (a == "--threads") o.threads = std::stoi(next());
     else if (a == "--plies") o.default_plies = std::stoi(next());
+    else if (a == "--cube-extra") o.cube_extra_plies = std::stoi(next());
     else if (a == "--hash") o.hash_mb = std::stoul(next());
     else {
       std::fprintf(stderr, "unknown option %s\n", a.c_str());

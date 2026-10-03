@@ -51,6 +51,7 @@ int main(int argc, char** argv) {
                   << "option name Threads type spin default 0 min 0 max 256\n"
                   << "option name Plies type spin default " << o.default_plies << " min 1 max 7\n"
                   << "option name Net type string default " << o.net_path << "\n"
+                  << "option name CubeExtraPlies type spin default " << o.cube_extra_plies << " min 0 max 4\n"
                   << "bgeiok" << std::endl;
       } else if (cmd == "isready") {
         std::cout << "readyok" << std::endl;
@@ -62,6 +63,7 @@ int main(int argc, char** argv) {
         }
         if (name == "Threads") engine.set_threads(std::stoi(value));
         else if (name == "Plies") plies = std::stoi(value);
+        else if (name == "CubeExtraPlies") engine.set_cube_extra_plies(std::stoi(value));
         else if (name == "Net") {
           bg::EngineOptions no = engine.options();
           no.net_path = value;
@@ -94,6 +96,7 @@ int main(int argc, char** argv) {
         while (is >> k) {
           if (k == "dice") { std::string d; is >> d; req["dice"] = {d[0] - '0', d[1] - '0'}; }
           else if (k == "plies") { int v; is >> v; req["options"]["plies"] = v; }
+          else if (k == "cubeplies") { int v; is >> v; req["options"]["cube_plies"] = v; }
           else if (k == "trials") { int v; is >> v; req["options"]["trials"] = v; }
           else if (k == "truncate") { int v; is >> v; req["options"]["truncate"] = v; }
         }
