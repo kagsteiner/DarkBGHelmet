@@ -7,3 +7,4 @@ data/
 nets/*
 !nets/latest.bgnn
 !nets/iter1.bgnn
+!nets/iter1_cube.bgnn
