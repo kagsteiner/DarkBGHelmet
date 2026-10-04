@@ -8,3 +8,4 @@ nets/*
 !nets/latest.bgnn
 !nets/iter1.bgnn
 !nets/iter1_cube.bgnn
+!nets/big1024_cube.bgnn
