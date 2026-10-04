@@ -123,6 +123,7 @@ SearchConfig Engine::parse_options(const json& req) const {
   if (o.contains("cubeful")) cfg.cubeful = o["cubeful"].get<bool>();
   if (o.contains("candidates")) cfg.max_candidates = o["candidates"].get<int>();
   if (o.contains("sampled_rolls")) cfg.sampled_rolls = std::clamp(o["sampled_rolls"].get<int>(), 1, 21);
+  if (o.contains("full_layers")) cfg.full_layers = std::clamp(o["full_layers"].get<int>(), 1, 8);
   return cfg;
 }
 
@@ -135,6 +136,7 @@ SearchConfig Engine::parse_cube_options(const json& req) const {
   SearchConfig cfg = SearchConfig::for_plies(plies);
   cfg.cubeful = base.cubeful;
   if (o.contains("sampled_rolls")) cfg.sampled_rolls = base.sampled_rolls;
+  if (o.contains("full_layers")) cfg.full_layers = base.full_layers;
   return cfg;
 }
 

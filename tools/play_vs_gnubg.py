@@ -7,7 +7,7 @@
 # Games are played in duplicate pairs: the same dice sequence is replayed with the
 # roles swapped, which removes most of the luck. Prints the running result in
 # points per game for DarkBGHelmet (positive = DarkBGHelmet wins).
-import math, os, random, subprocess, sys
+import math, os, random, subprocess, sys, time
 import gnubg
 
 GAMES = int(os.environ.get("BG_GAMES", "100"))
@@ -20,6 +20,17 @@ LOG = os.environ.get("BG_LOG", "")
 ENGINE = os.environ.get("BG_ENGINE", "build/bgei")
 NOCUBE = os.environ.get("BG_NOCUBE", "0") == "1"
 STATS = {"our_dbl": 0, "gnu_dbl": 0, "our_pass": 0, "gnu_pass": 0}
+CUBE_EXTRA = int(os.environ.get("BG_CUBE_EXTRA", "0"))
+# Decision timing: [seconds, count] per engine and decision type.
+TIMES = {("ours", "move"): [0.0, 0], ("ours", "cube"): [0.0, 0], ("gnu", "move"): [0.0, 0], ("gnu", "cube"): [0.0, 0]}
+
+
+def timed(who, kind, fn, *args):
+    t = time.perf_counter()
+    r = fn(*args)
+    TIMES[(who, kind)][0] += time.perf_counter() - t
+    TIMES[(who, kind)][1] += 1
+    return r
 
 gnubg.command("set threads 1")
 gnubg.command("new session")
@@ -46,6 +57,16 @@ def ask(cmd, until):
 
 
 ask("bgei", "bgeiok")
+if os.environ.get("BG_CANDIDATES"):
+    eng.stdin.write("setoption name Candidates value %s\n" % os.environ["BG_CANDIDATES"])
+    eng.stdin.flush()
+for env_name, opt in (("BG_SAMPLED", "SampledRolls"), ("BG_FULL", "FullLayers")):
+    if os.environ.get(env_name):
+        eng.stdin.write("setoption name %s value %s\n" % (opt, os.environ[env_name]))
+        eng.stdin.flush()
+if CUBE_EXTRA:
+    eng.stdin.write("setoption name CubeExtraPlies value %d\n" % CUBE_EXTRA)
+    eng.stdin.flush()
 
 
 def parse_pt(t):
@@ -134,7 +155,7 @@ def our_move(board, d1, d2, cube, owner_rel):
 
 def our_cube(board, cube, owner_rel):
     our_setup(board, cube, owner_rel)
-    out = ask("go cube plies %d" % OUR_PLIES, "bestcube")
+    out = ask("go cube plies %d cubeplies %d" % (OUR_PLIES, min(7, OUR_PLIES + CUBE_EXTRA)), "bestcube")
     line = out[-1]
     dec = line[len("bestcube "):].split(";")[0]
     take = "take pass" not in line
@@ -159,19 +180,19 @@ def play_game(rng_seed, ours_first):
         # cube action (not before the very first roll)
         if not first and orel != 1 and not NOCUBE:
             if ours_to_move:
-                dbl, _ = our_cube(board, cube, orel)
+                dbl, _ = timed("ours", "cube", our_cube, board, cube, orel)
                 if dbl:
                     STATS["our_dbl"] += 1
-                    _, take = gnu_cube(board, cube, orel)  # gnubg as taker: evaluate from doubler's view
+                    _, take = timed("gnu", "cube", gnu_cube, board, cube, orel)  # gnubg as taker
                     if not take:
                         STATS["gnu_pass"] += 1
                         return cube
                     cube *= 2; owner_ours = False
             else:
-                dbl, _ = gnu_cube(board, cube, orel)
+                dbl, _ = timed("gnu", "cube", gnu_cube, board, cube, orel)
                 if dbl:
                     STATS["gnu_dbl"] += 1
-                    _, take = our_cube(board, cube, orel)
+                    _, take = timed("ours", "cube", our_cube, board, cube, orel)
                     if not take:
                         STATS["our_pass"] += 1
                         return -cube
@@ -181,7 +202,7 @@ def play_game(rng_seed, ours_first):
         while board == START and d1 == d2:
             d1, d2 = rng.randint(1, 6), rng.randint(1, 6)
         orel = -1 if owner_ours is None else (0 if owner_ours == ours_to_move else 1)
-        mv = our_move(board, d1, d2, cube, orel) if ours_to_move else gnu_move(board, d1, d2, cube, orel)
+        mv = timed("ours", "move", our_move, board, d1, d2, cube, orel) if ours_to_move else timed("gnu", "move", gnu_move, board, d1, d2, cube, orel)
         if mv:
             new = apply_move(board, mv)  # (mover, opponent) -> from opponent's view: (opp=mover, me=opponent)
         else:
@@ -192,6 +213,29 @@ def play_game(rng_seed, ours_first):
             return pts if ours_to_move else -pts
         board = new
         ours_to_move = not ours_to_move
+
+
+# gnubg's Python API waits ~12 ms per evaluation call regardless of work;
+# measure it on a cached 0-ply evaluation so it can be subtracted.
+_b = START
+_ci = gnubg.cubeinfo(1, -1, 0, 0, (0, 0), 0, 0)
+gnubg.cfevaluate(_b, _ci, gnubg.evalcontext(1, 0, 1, 1, 0.0))
+_t = time.perf_counter()
+for _ in range(30):
+    gnubg.cfevaluate(_b, _ci, gnubg.evalcontext(1, 0, 1, 1, 0.0))
+GNU_OVERHEAD = (time.perf_counter() - _t) / 30
+
+
+def timing_report():
+    parts = []
+    for who in ("ours", "gnu"):
+        for kind in ("move", "cube"):
+            t, c = TIMES[(who, kind)]
+            if c:
+                avg = 1000 * t / c
+                adj = "" if who == "ours" else " (%.1f w/o API overhead)" % max(0.0, avg - 1000 * GNU_OVERHEAD)
+                parts.append("%s %s %.1f ms%s n=%d" % (who, kind, avg, adj, c))
+    return "; ".join(parts) + "; gnubg API overhead %.1f ms/call" % (1000 * GNU_OVERHEAD)
 
 
 total = 0.0
@@ -213,4 +257,8 @@ for g in range(GAMES // 2):
     sys.stderr.write(msg + "\n")
     if logf:
         logf.write(msg + "\n"); logf.flush()
+msg = "TIMING " + timing_report()
+sys.stderr.write(msg + "\n")
+if logf:
+    logf.write(msg + "\n"); logf.flush()
 send("quit")

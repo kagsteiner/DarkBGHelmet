@@ -38,6 +38,8 @@ int main(int argc, char** argv) {
   json pos = {{"xgid", bg::to_xgid(bg::Position{bg::Board::start(), {}, {0, 0}})}};
   json match = json::object();
   int plies = o.default_plies;
+  int candidates = 0;  // 0 = engine default
+  int sampled = 0, full_layers = 0;
 
   std::string line;
   while (std::getline(std::cin, line)) {
@@ -52,6 +54,9 @@ int main(int argc, char** argv) {
                   << "option name Plies type spin default " << o.default_plies << " min 1 max 7\n"
                   << "option name Net type string default " << o.net_path << "\n"
                   << "option name CubeExtraPlies type spin default " << o.cube_extra_plies << " min 0 max 4\n"
+                  << "option name Candidates type spin default 0 min 0 max 32\n"
+                  << "option name SampledRolls type spin default 0 min 0 max 21\n"
+                  << "option name FullLayers type spin default 0 min 0 max 8\n"
                   << "bgeiok" << std::endl;
       } else if (cmd == "isready") {
         std::cout << "readyok" << std::endl;
@@ -64,6 +69,9 @@ int main(int argc, char** argv) {
         if (name == "Threads") engine.set_threads(std::stoi(value));
         else if (name == "Plies") plies = std::stoi(value);
         else if (name == "CubeExtraPlies") engine.set_cube_extra_plies(std::stoi(value));
+        else if (name == "Candidates") candidates = std::stoi(value);
+        else if (name == "SampledRolls") sampled = std::stoi(value);
+        else if (name == "FullLayers") full_layers = std::stoi(value);
         else if (name == "Net") {
           bg::EngineOptions no = engine.options();
           no.net_path = value;
@@ -92,6 +100,9 @@ int main(int argc, char** argv) {
         std::string what, k;
         is >> what;
         json req = {{"position", pos}, {"options", {{"plies", plies}}}};
+        if (candidates > 0) req["options"]["candidates"] = candidates;
+        if (sampled > 0) req["options"]["sampled_rolls"] = sampled;
+        if (full_layers > 0) req["options"]["full_layers"] = full_layers;
         if (!match.empty()) req["match"] = match;
         while (is >> k) {
           if (k == "dice") { std::string d; is >> d; req["dice"] = {d[0] - '0', d[1] - '0'}; }
