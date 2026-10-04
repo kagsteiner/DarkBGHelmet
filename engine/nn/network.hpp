@@ -20,7 +20,7 @@
 
 namespace bg {
 
-constexpr int kMaxHidden = 512;
+constexpr int kMaxHidden = 1024;
 constexpr int kMaxDense = 128;  // max width of the two small dense layers
 
 struct Network {
