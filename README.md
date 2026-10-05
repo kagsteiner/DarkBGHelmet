@@ -11,6 +11,11 @@ A backgammon engine in C++20:
 The design rationale is in [PLAN.md](PLAN.md). The interfaces are described in
 [docs/API.md](docs/API.md).
 
+* **How it works:** [docs/ENGINE.md](docs/ENGINE.md) covers the network, the search, cube and
+  match handling, and training.
+* **Results against gnubg:** [docs/RESULTS.md](docs/RESULTS.md).
+* **Running it on a server:** [deploy/DEPLOY.md](deploy/DEPLOY.md).
+
 ## Build
 
 ```
@@ -27,6 +32,8 @@ The build produces these binaries:
 | `bgei` | BGEI text protocol on stdin/stdout (UCI-like) |
 | `bgcli` | Developer tool: `moves`, `eval`, `move`, `cube`, `rollout`, `bench`, `speed`, `perft`, checks against gnubg |
 | `bgtrain` | Dataset builder and network trainer |
+| `bgplay` | Play against the engine in a terminal |
+| `bgselfplay` | Engine self-play exported as Jellyfish `.mat` |
 | `bgtests` | Unit tests |
 
 The first run creates `data/bearoff_os15.bin`, the one-sided bearoff database (under a second to generate).
@@ -48,12 +55,12 @@ curl -s -X POST localhost:8080/v1/move \
 | Board | `engine/core/board.hpp` | 2 × 128-bit lanes of 25 nibbles, one per side from its own perspective. A checker step is one add and one subtract; changing the side to move swaps the lanes. |
 | Move generation | `engine/core/movegen.cpp` | All distinct plays, enforcing the maximum-dice and larger-die rules. Verified against gnubg on 5,300 random positions. |
 | Position formats | `engine/core/ids.cpp` | gnubg Position ID / Match ID and XGID |
-| Network | `engine/nn/network.cpp` | 780 sparse thermometer features ("at least k checkers on point p") feed two perspective accumulators, updated incrementally. Then 8 hand-crafted features (pips, hit chances, escapes), → 32 → 32 → three output heads (contact / crashed / race), each with 5 outcome probabilities. About 1.1 µs per evaluation per core. |
+| Network | `engine/nn/network.cpp` | 780 sparse thermometer features ("at least k checkers on point p") feed two perspective accumulators of 1024 units, updated incrementally. They are joined by 8 hand-crafted features (pips, hit chances, escapes). Then 128 → 64 → three output heads (contact / crashed / race), each with 5 outcome probabilities, plus a cube head with learned cube efficiency. About 1.8 µs per evaluation per core. |
 | Bearoff | `engine/eval/bearoff.cpp` | One-sided database for 15 checkers on 6 points, matching gnubg |
-| Cube | `engine/eval/cube.cpp` | Kazaross-XG2 MET, generalised Janowski model with recursive live-cube take points. Matches gnubg 1.08 on about 99% of 0-ply match cube decisions. |
+| Cube | `engine/eval/cube.cpp` | Kazaross-XG2 MET, generalised Janowski model with recursive live-cube take points. The cube efficiency per position comes from the cube head; the formula is the fallback. |
 | Search | `engine/search/search.cpp` | Expectimax over the 21 rolls with static move choice at inner nodes. Cubeful recursion over several cube states at once. Root move filters, a transposition table, and parallel search over candidates × first rolls. Deep chance layers search only k representative rolls and correct the static value of the others (control variate). |
 | Rollouts | `engine/search/rollout.cpp` | Cubeful, stratified first two rolls, optional luck variance reduction |
-| Training | `training/`, `tools/gnubg_label.py` | gnubg self-play positions labelled with gnubg 2-ply, Adam trainer in C++ |
+| Training | `training/`, `tools/` | Bootstrapped from gnubg 2-ply labels, then expert iteration with our own 3-ply search labels. Cube head trained on 4-ply cubeful search. Adam trainer in C++. |
 
 ## Training a network
 
