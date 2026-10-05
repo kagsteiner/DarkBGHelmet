@@ -44,6 +44,10 @@ bool Engine::add_network(const std::string& name, const std::string& path, std::
     if (err) *err = name + " (" + path + "): " + *err;
     return false;
   }
+  if (!slot->ev->has_cube_head()) {
+    if (err) *err = name + " (" + path + "): network has no cube head (add one with 'bgtrain traincube')";
+    return false;
+  }
   slot->search = std::make_unique<Searcher>(*slot->ev, opts_.threads, opts_.hash_mb);
   std::lock_guard<std::mutex> g(mutex_);
   for (auto& n : nets_)
@@ -72,12 +76,6 @@ Engine::Slot& Engine::select(const json& req) {
   bad("unknown network '" + want + "' (available: " + names + ")");
 }
 
-void Engine::apply_cube_head(Slot& s, const json& req, HeadGuard& g) {
-  g.ev = s.ev.get();
-  g.prev = s.ev->use_cube_head();
-  if (req.contains("options") && req["options"].contains("cube_head"))
-    s.ev->set_use_cube_head(req["options"]["cube_head"].get<bool>());
-}
 
 void Engine::set_threads(int t) {
   std::lock_guard<std::mutex> g(mutex_);
@@ -222,8 +220,6 @@ json Engine::evaluate(const json& req) {
   SearchConfig cfg = parse_cube_options(req);
   std::lock_guard<std::mutex> g(mutex_);
   Slot& net = select(req);
-  HeadGuard hg;
-  apply_cube_head(net, req, hg);
   CubeResult r = net.search->analyze_cube(p.board, p.match, cfg);
   CubeModel cm(p.match);
   const bool jac = p.match.money() && p.match.jacoby && p.match.owner == CubeOwner::Center && p.match.cube == 1;
@@ -252,8 +248,6 @@ json Engine::cube(const json& req) {
   SearchConfig cfg = parse_cube_options(req);
   std::lock_guard<std::mutex> g(mutex_);
   Slot& net = select(req);
-  HeadGuard hg;
-  apply_cube_head(net, req, hg);
   CubeResult r = net.search->analyze_cube(p.board, p.match, cfg);
   json out = cube_json(r, p);
   out["plies"] = r.plies;
@@ -271,8 +265,6 @@ json Engine::move(const json& req) {
   if (req.contains("options") && req["options"].contains("max_moves")) limit = req["options"]["max_moves"].get<int>();
   std::lock_guard<std::mutex> g(mutex_);
   Slot& net = select(req);
-  HeadGuard hg;
-  apply_cube_head(net, req, hg);
   MoveAnalysis a = net.search->analyze_moves(p.board, p.dice[0], p.dice[1], p.match, cfg);
   json moves = json::array();
   const bool match = !p.match.money();
@@ -328,8 +320,6 @@ json Engine::rollout(const json& req) {
   if (rc.trials < 1 || rc.trials > 1000000) bad("trials must be 1..1000000");
   std::lock_guard<std::mutex> g(mutex_);
   Slot& net = select(req);
-  HeadGuard hg;
-  apply_cube_head(net, req, hg);
   CubeModel cm(p.match);
   auto result_json = [&](const RolloutResult& r, const CubeModel& m) {
     json j = {{"probabilities", probs_json(r.probs)},

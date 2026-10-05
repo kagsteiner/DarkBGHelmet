@@ -255,14 +255,12 @@ int main(int argc, char** argv) {
     // bgcli duel <netA> <netB> <games> [pliesA] [pliesB] [threads]
     // Money games, duplicate pairs (same dice, roles swapped). Points per game for A.
     // Environment: BG_DUEL_CUBE=1 plays with the cube (Jacoby on unless BG_JACOBY=0);
-    // BG_A_NOHEAD=1 / BG_B_NOHEAD=1 make that side use the cube formula instead of
-    // the network's cube head; BG_CUBE_EXTRA=n adds plies for cube decisions.
+    // BG_CUBE_EXTRA=n adds plies for cube decisions. A network without a cube
+    // head plays with the cube formula.
     Evaluator ea, eb;
     std::string err;
     if (!ea.init(argv[2], "data", &err) || !eb.init(argv[3], "data", &err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; }
     auto env = [](const char* k) { const char* v = std::getenv(k); return v ? std::atoi(v) : 0; };
-    if (env("BG_A_NOHEAD")) ea.set_use_cube_head(false);
-    if (env("BG_B_NOHEAD")) eb.set_use_cube_head(false);
     const bool cube = env("BG_DUEL_CUBE") != 0;
     const bool jacoby = cube && (std::getenv("BG_JACOBY") ? env("BG_JACOBY") != 0 : true);
     const int extra = env("BG_CUBE_EXTRA");
@@ -340,7 +338,7 @@ int main(int argc, char** argv) {
     for (double r : res) v += (r - m) * (r - m);
     double se = std::sqrt(v / (pairs - 1 > 0 ? pairs - 1 : 1) / pairs);
     std::printf("duel %s%s (%d-ply) vs %s%s (%d-ply)%s: %d games, A ppg %+.4f (se %.4f)  doubles %ld passes %ld  %.0fs\n",
-                argv[2], env("BG_A_NOHEAD") ? "[formula]" : "", pa, argv[3], env("BG_B_NOHEAD") ? "[formula]" : "", pb,
+                argv[2], ea.has_cube_head() ? "" : "[formula]", pa, argv[3], eb.has_cube_head() ? "" : "[formula]", pb,
                 cube ? " with cube" : "", 2 * pairs, m, se, doubles.load(), passes.load(),
                 std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
     return 0;

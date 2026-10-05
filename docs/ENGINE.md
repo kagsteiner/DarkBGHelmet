@@ -273,6 +273,11 @@ holding game or a race. The **cube head** learns x per position:
 
 The same x per cube state is then used for every match score.
 
+The cube head is a required part of every network used for play and analysis: `bgserver`,
+`bgei`, `bgplay` and `bgselfplay` refuse networks without one. A newly trained network gets its
+head in a second step (`bgtrain traincube`). The formula with x = 0.76 remains only as the
+fallback for bearoff-database positions and in developer tools.
+
 ### 4.4 Cube decision
 
 For the player on roll the engine computes three values:

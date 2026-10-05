@@ -70,15 +70,8 @@ class Engine {
     std::unique_ptr<Evaluator> ev;
     std::unique_ptr<Searcher> search;
   };
-  // Network chosen by the request's "network" option (default: the first);
-  // applies the "cube_head" option for the duration of the request.
+  // Network chosen by the request's "network" option (default: the first).
   Slot& select(const nlohmann::json& req);
-  struct HeadGuard {
-    Evaluator* ev = nullptr;
-    bool prev = true;
-    ~HeadGuard() { if (ev) ev->set_use_cube_head(prev); }
-  };
-  void apply_cube_head(Slot& s, const nlohmann::json& req, HeadGuard& g);
 
   EngineOptions opts_;
   std::vector<std::unique_ptr<Slot>> nets_;

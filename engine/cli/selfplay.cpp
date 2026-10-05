@@ -102,6 +102,10 @@ int main(int argc, char** argv) {
   Evaluator ev;
   std::string err;
   if (!ev.init(net, "data", &err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; }
+  if (!ev.has_cube_head()) {
+    std::fprintf(stderr, "%s has no cube head; add one with 'bgtrain traincube'\n", net.c_str());
+    return 1;
+  }
   Searcher search(ev, threads);
   const SearchConfig cfg = SearchConfig::for_plies(plies);
   const SearchConfig cube_cfg = SearchConfig::for_plies(std::min(7, plies + cube_extra));

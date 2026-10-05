@@ -102,16 +102,13 @@ struct Searcher::Root {
   CubeState s0;
   u64 salt;
   bool money;
-  // `extra_salt` distinguishes evaluator settings that change cached values
-  // (e.g. whether the cube head is used).
-  Root(const MatchState& ms, const SearchConfig& c, u64 extra_salt) : cm{CubeModel(ms), CubeModel(ms.swapped())}, cfg(c) {
+  Root(const MatchState& ms, const SearchConfig& c) : cm{CubeModel(ms), CubeModel(ms.swapped())}, cfg(c) {
     s0.cube = int16_t(ms.cube);
     s0.owner = ms.owner;
     money = ms.money();
     salt = mix64(u64(ms.length) * 1315423911u ^ u64(ms.score[0]) << 8 ^ u64(ms.score[1]) << 16 ^
                  u64(ms.cube) << 24 ^ u64(ms.owner) << 40 ^ u64(ms.crawford) << 44 ^ u64(ms.jacoby) << 45 ^
-                 u64(c.sampled_rolls) << 48 ^ u64(c.full_layers) << 54 ^ u64(c.cubeful) << 60) ^
-           mix64(extra_salt + 0x5bd1e995);
+                 u64(c.sampled_rolls) << 48 ^ u64(c.full_layers) << 54 ^ u64(c.cubeful) << 60);
   }
   float flip(float v) const { return money ? -v : 1.f - v; }
 };
@@ -380,7 +377,7 @@ MoveAnalysis Searcher::analyze_moves(const Board& b, int d1, int d2, const Match
   const auto t0 = std::chrono::steady_clock::now();
   stop_.store(false);
   nodes_.store(0);
-  const Root R(ms, cfg, ev_.cube_head_active() ? 1 : 0);
+  const Root R(ms, cfg);
   MoveAnalysis res;
   std::vector<Move> moves;
   generate_moves(b, d1, d2, moves);
@@ -460,7 +457,7 @@ CubeResult Searcher::analyze_cube(const Board& b, const MatchState& ms, const Se
   const auto t0 = std::chrono::steady_clock::now();
   stop_.store(false);
   nodes_.store(0);
-  const Root R(ms, cfg, ev_.cube_head_active() ? 1 : 0);
+  const Root R(ms, cfg);
   CubeResult res;
   StateSet S;
   S.add(R.s0);
@@ -510,7 +507,7 @@ CubeResult Searcher::analyze_cube(const Board& b, const MatchState& ms, const Se
 Probs Searcher::evaluate(const Board& b, const MatchState& ms, int plies) {
   SearchConfig cfg = SearchConfig::for_plies(plies);
   cfg.cubeful = false;
-  const Root R(ms, cfg, ev_.cube_head_active() ? 1 : 0);
+  const Root R(ms, cfg);
   StateSet S;
   S.add(R.s0);
   if (plies <= 1) return ev_.evaluate(b);

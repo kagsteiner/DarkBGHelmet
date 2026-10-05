@@ -60,7 +60,7 @@ Probs Evaluator::evaluate(const Board& b) const {
 
 void Evaluator::cube_x(const Board& b, float x[3]) const {
   const PosClass cls = classify(b);
-  if (!cube_head_active() || cls == PosClass::Over || cls == PosClass::Bearoff) {
+  if (!net_.has_cube_head() || cls == PosClass::Over || cls == PosClass::Bearoff) {
     x[0] = x[1] = x[2] = cube_efficiency(b);
     return;
   }

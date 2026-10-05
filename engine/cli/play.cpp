@@ -82,24 +82,17 @@ static bool common_command(const std::string& raw, Evaluator& ev, Searcher& sear
       std::cout << "Cannot load " << path << ": " << err << "\n";
       return true;
     }
+    if (!n.has_cube_head()) {
+      std::cout << path << " has no cube head; add one with 'bgtrain traincube'.\n";
+      return true;
+    }
     ev.set_network(n);
     search.clear_cache();
-    std::cout << "Now playing with " << n.id << " (" << path << ")"
-              << (ev.cube_head_active() ? ", cube head active"
-                                        : (n.has_cube_head() ? ", cube head off (type 'cubehead on')" : ", cube formula"))
-              << ".\n";
-    return true;
-  }
-  if (c == "cubehead on" || c == "cubehead off") {
-    ev.set_use_cube_head(c == "cubehead on");
-    search.clear_cache();
-    std::cout << "Cube decisions: "
-              << (ev.cube_head_active() ? "learned cube head" : "formula (cube efficiency 0.76)") << ".\n";
+    std::cout << "Now playing with " << n.id << " (" << path << ").\n";
     return true;
   }
   if (c == "info") {
-    std::cout << "Network " << ev.network().id << ", " << ev.network().H << " hidden units, cube "
-              << (ev.cube_head_active() ? "head" : "formula") << ".\n";
+    std::cout << "Network " << ev.network().id << ", " << ev.network().H << " hidden units.\n";
     return true;
   }
   return false;
@@ -126,6 +119,10 @@ int main(int argc, char** argv) {
   Evaluator ev;
   std::string err;
   if (!ev.init(net, "data", &err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; }
+  if (!ev.has_cube_head()) {
+    std::fprintf(stderr, "%s has no cube head; add one with 'bgtrain traincube'\n", net.c_str());
+    return 1;
+  }
   Searcher search(ev, threads);
   const SearchConfig cfg = SearchConfig::for_plies(plies);
   const SearchConfig cube_cfg = SearchConfig::for_plies(std::min(7, plies + cube_extra));
@@ -135,7 +132,7 @@ int main(int argc, char** argv) {
             << std::min(7, plies + cube_extra) << "-ply cube decisions). You are X.\n"
             << "Commands on your turn: roll / double (before rolling), a move like '13/7 8/7', 'moves' (list legal),\n"
             << "'hint' (engine's suggestion), 'resign', 'quit',\n"
-            << "'net <file>' (switch network), 'cubehead on|off', 'info'.\n";
+            << "'net <file>' (switch network), 'info'.\n";
 
   int score_h = 0, score_e = 0;
   bool crawford_done = false;

@@ -86,7 +86,6 @@ Then `"options": {"network": "fast"}` selects the second one. `/v1/info` lists a
 | `cube_extra_plies` | Cube decisions (`/v1/cube`, `/v1/evaluate`) search this many plies deeper than `plies`. Default 2 (server flag `--cube-extra`); 0 = same depth |
 | `cube_plies` | Exact depth for cube decisions (overrides `cube_extra_plies`) |
 | `network` | Name of a loaded network (see `/v1/info`); default `default`. Load more with `bgserver --add-net name=file` |
-| `cube_head` | `false` uses the cube formula instead of the network's learned cube head for this request |
 | `cubeful` | Cubeful (default) or cubeless search |
 | `candidates` | Maximum number of plays searched at full depth |
 | `max_moves` | Maximum number of plays returned |

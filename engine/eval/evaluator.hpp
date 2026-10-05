@@ -28,12 +28,11 @@ class Evaluator {
   void evaluate_moves(const Board& b, const std::vector<Move>& moves, std::vector<Probs>& out) const;
 
   // Cube efficiency for the cube states (centered, owned by the player on roll,
-  // owned by the opponent). Uses the network's cube head when present and
-  // enabled, otherwise the fixed formula (cube_efficiency).
+  // owned by the opponent), from the network's cube head. The fixed formula
+  // (cube_efficiency) is used for bearoff-database and finished positions, and
+  // for networks without a cube head (only developer tools load those).
   void cube_x(const Board& b, float x[3]) const;
-  void set_use_cube_head(bool on) { use_cube_head_ = on; }
-  bool use_cube_head() const { return use_cube_head_; }
-  bool cube_head_active() const { return use_cube_head_ && net_.has_cube_head(); }
+  bool has_cube_head() const { return net_.has_cube_head(); }
 
   // Probabilities of a finished game from the view of board side 0 (the winner
   // is whoever has no checkers left).
@@ -43,7 +42,6 @@ class Evaluator {
   Probs eval_net(const Board& b, const Accumulator& acc, int stm) const;
   Probs heuristic(const Board& b) const;
   Network net_;
-  bool use_cube_head_ = true;
 };
 
 }  // namespace bg
