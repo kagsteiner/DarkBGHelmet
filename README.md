@@ -86,7 +86,8 @@ The networks were initially trained with the help of
 * **Bootstrap.** The first networks learned from gnubg's evaluations. gnubg played games
   against itself (later also against our engine), and every position was labelled with
   gnubg's 2-ply (= XG 3-ply) evaluation via its Python scripting interface
-  (`tools/gnubg_label.py`). About 40 million positions were labelled this way.
+  (`tools/gnubg_label.py`). About 60 million positions were labelled this way: the top
+  candidate plays of each roll at 2-ply, the rest at 0-ply.
 * **Expert iteration.** From there on, the engine taught itself: positions were relabelled
   with DarkBGHelmet's own 3-ply search, and new networks were trained on those labels only.
   The current default network (`nets/latest.bgnn`, 1024/128/64 with a cube head) was trained
