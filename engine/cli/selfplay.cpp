@@ -3,6 +3,10 @@
 //
 //   bgselfplay [--match 7 | --games 10] [--plies 3] [--cube-extra 1] [--net nets/latest.bgnn]
 //              [--threads 4] [--seed N] [--name1 X] [--name2 Y] [--out file.mat] [--no-jacoby]
+//              [--positions file.txt]
+//
+// --positions appends every position before a roll (player on roll = side 0) as
+// a label line "<posid> -1 0.5 0 0 0 0", ready for `bgtrain relabel`.
 //
 // --match L plays one L-point match (Crawford rule); --games N plays N money
 // games (shown as a "0 point match", like BGBlitz does).
@@ -14,6 +18,7 @@
 #include <string>
 #include <vector>
 
+#include "core/ids.hpp"
 #include "core/movegen.hpp"
 #include "eval/cube.hpp"
 #include "eval/evaluator.hpp"
@@ -73,7 +78,7 @@ struct GameLog {
 }  // namespace
 
 int main(int argc, char** argv) {
-  std::string net = "nets/latest.bgnn", out = "", name[2] = {"DarkBGHelmet_A", "DarkBGHelmet_B"};
+  std::string net = "nets/latest.bgnn", out = "", name[2] = {"DarkBGHelmet_A", "DarkBGHelmet_B"}, positions;
   int plies = 3, cube_extra = 1, match = 0, games = 10, threads = 4;
   bool jacoby = true;
   unsigned seed = unsigned(std::chrono::system_clock::now().time_since_epoch().count());
@@ -91,6 +96,7 @@ int main(int argc, char** argv) {
     else if (a == "--name2") name[1] = next();
     else if (a == "--out") out = next();
     else if (a == "--no-jacoby") jacoby = false;
+    else if (a == "--positions") positions = next();
     else {
       std::fprintf(stderr,
                    "usage: bgselfplay [--match L | --games N] [--plies n] [--cube-extra n] [--net file] [--threads n]\n"
@@ -119,6 +125,7 @@ int main(int argc, char** argv) {
   }
   FILE* f = std::fopen(out.c_str(), "w");
   if (!f) { std::fprintf(stderr, "cannot write %s\n", out.c_str()); return 1; }
+  FILE* pf = positions.empty() ? nullptr : std::fopen(positions.c_str(), "a");
   std::fprintf(f, "; [Crawford \"On\"]\n; [Jacoby \"%s\"]\n; [Beaver \"Off\"]\n", match == 0 && jacoby ? "On" : "Off");
   std::fprintf(f, " %d point match\n\n", match);
 
@@ -172,6 +179,7 @@ int main(int argc, char** argv) {
           mp = p == 0 ? ms : ms.swapped();
         }
       }
+      if (pf) std::fprintf(pf, "%s -1 0.5 0 0 0 0\n", position_id(b).c_str());
       int a, c;
       if (opening) { a = std::max(d1, d2); c = std::min(d1, d2); opening = false; }
       else { a = int(rng() % 6) + 1; c = int(rng() % 6) + 1; }
@@ -202,6 +210,7 @@ int main(int argc, char** argv) {
     if (match_over) break;
   }
   std::fclose(f);
+  if (pf) std::fclose(pf);
   std::printf("written %s\n", out.c_str());
   return 0;
 }
