@@ -11,3 +11,4 @@ nets/*
 !nets/big1024_cube.bgnn
 .obsidian/
 *.mat
+!nets/big2_cube.bgnn
