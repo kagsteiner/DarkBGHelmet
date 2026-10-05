@@ -70,6 +70,41 @@ std::string mirror(const std::string& m) {
 
 }  // namespace
 
+// Handles commands that are valid at any prompt. Returns true if `c` was one.
+static bool common_command(const std::string& raw, Evaluator& ev, Searcher& search) {
+  std::string c = lower(raw);
+  if (c.rfind("net ", 0) == 0) {
+    std::string path = raw.substr(4);
+    while (!path.empty() && path[0] == ' ') path.erase(0, 1);
+    Network n;
+    std::string err;
+    if (!n.load(path, &err)) {
+      std::cout << "Cannot load " << path << ": " << err << "\n";
+      return true;
+    }
+    ev.set_network(n);
+    search.clear_cache();
+    std::cout << "Now playing with " << n.id << " (" << path << ")"
+              << (ev.cube_head_active() ? ", cube head active"
+                                        : (n.has_cube_head() ? ", cube head off (type 'cubehead on')" : ", cube formula"))
+              << ".\n";
+    return true;
+  }
+  if (c == "cubehead on" || c == "cubehead off") {
+    ev.set_use_cube_head(c == "cubehead on");
+    search.clear_cache();
+    std::cout << "Cube decisions: "
+              << (ev.cube_head_active() ? "learned cube head" : "formula (cube efficiency 0.76)") << ".\n";
+    return true;
+  }
+  if (c == "info") {
+    std::cout << "Network " << ev.network().id << ", " << ev.network().H << " hidden units, cube "
+              << (ev.cube_head_active() ? "head" : "formula") << ".\n";
+    return true;
+  }
+  return false;
+}
+
 int main(int argc, char** argv) {
   std::string net = "nets/latest.bgnn";
   int plies = 3, match = 0, threads = 4, cube_extra = 2;
@@ -99,7 +134,8 @@ int main(int argc, char** argv) {
   std::cout << "DarkBGHelmet (" << ev.network().id << ", " << plies << "-ply checker play, "
             << std::min(7, plies + cube_extra) << "-ply cube decisions). You are X.\n"
             << "Commands on your turn: roll / double (before rolling), a move like '13/7 8/7', 'moves' (list legal),\n"
-            << "'hint' (engine's suggestion), 'resign', 'quit'.\n";
+            << "'hint' (engine's suggestion), 'resign', 'quit',\n"
+            << "'net <file>' (switch network), 'cubehead on|off', 'info'.\n";
 
   int score_h = 0, score_e = 0;
   bool crawford_done = false;
@@ -150,8 +186,10 @@ int main(int argc, char** argv) {
         bool rolled = opening;
         while (!rolled) {
           bool can_double = msh.owner != CubeOwner::Opp && CubeModel(msh).can_double(0, msh.cube);
-          std::string c = lower(ask(can_double ? "Your turn: roll or double? " : "Your turn (press Enter to roll): "));
+          const std::string raw = ask(can_double ? "Your turn: roll or double? " : "Your turn (press Enter to roll): ");
+          const std::string c = lower(raw);
           if (c == "quit") return 0;
+          if (common_command(raw, ev, search)) continue;
           if (c == "resign") { winner = 1; points = msh.cube; break; }
           if (can_double && (c == "double" || c == "d")) {
             CubeResult r = search.analyze_cube(hb, msh, cube_cfg);  // from your view; 'take' = engine's answer
@@ -184,6 +222,7 @@ int main(int argc, char** argv) {
             std::string s = ask("Your move: ");
             std::string l = lower(s);
             if (l == "quit") return 0;
+            if (common_command(s, ev, search)) continue;
             if (l == "moves") {
               for (const Move& m : moves) std::cout << "  " << m.str() << "\n";
               continue;

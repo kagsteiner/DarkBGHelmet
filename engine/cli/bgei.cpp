@@ -40,6 +40,7 @@ int main(int argc, char** argv) {
   int plies = o.default_plies;
   int candidates = 0;  // 0 = engine default
   int sampled = 0, full_layers = 0;
+  std::string network;  // empty = default network
 
   std::string line;
   while (std::getline(std::cin, line)) {
@@ -56,6 +57,8 @@ int main(int argc, char** argv) {
                   << "option name CubeExtraPlies type spin default " << o.cube_extra_plies << " min 0 max 4\n"
                   << "option name Candidates type spin default 0 min 0 max 32\n"
                   << "option name SampledRolls type spin default 0 min 0 max 21\n"
+                  << "option name AddNet type string (name=path)\n"
+                  << "option name Network type string default default\n"
                   << "option name FullLayers type spin default 0 min 0 max 8\n"
                   << "bgeiok" << std::endl;
       } else if (cmd == "isready") {
@@ -71,6 +74,12 @@ int main(int argc, char** argv) {
         else if (name == "CubeExtraPlies") engine.set_cube_extra_plies(std::stoi(value));
         else if (name == "Candidates") candidates = std::stoi(value);
         else if (name == "SampledRolls") sampled = std::stoi(value);
+        else if (name == "Network") network = value == "default" ? "" : value;
+        else if (name == "AddNet") {
+          size_t eq = value.find('=');
+          if (eq == std::string::npos) std::cout << "error AddNet expects name=path" << std::endl;
+          else if (!engine.add_network(value.substr(0, eq), value.substr(eq + 1), &err)) std::cout << "error " << err << std::endl;
+        }
         else if (name == "FullLayers") full_layers = std::stoi(value);
         else if (name == "Net") {
           bg::EngineOptions no = engine.options();
@@ -102,6 +111,7 @@ int main(int argc, char** argv) {
         json req = {{"position", pos}, {"options", {{"plies", plies}}}};
         if (candidates > 0) req["options"]["candidates"] = candidates;
         if (sampled > 0) req["options"]["sampled_rolls"] = sampled;
+        if (!network.empty()) req["options"]["network"] = network;
         if (full_layers > 0) req["options"]["full_layers"] = full_layers;
         if (!match.empty()) req["match"] = match;
         while (is >> k) {

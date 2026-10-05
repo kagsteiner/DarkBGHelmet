@@ -28,22 +28,78 @@ const char* owner_name(CubeOwner o) {
 
 bool Engine::init(const EngineOptions& o, std::string* err) {
   opts_ = o;
-  if (!ev_.init(o.net_path, o.data_dir, err)) return false;
-  search_ = std::make_unique<Searcher>(ev_, o.threads, o.hash_mb);
+  nets_.clear();
+  if (!add_network("default", o.net_path, err)) return false;
+  for (const auto& [name, path] : o.extra_nets)
+    if (!add_network(name, path, err)) return false;
   return true;
+}
+
+bool Engine::add_network(const std::string& name, const std::string& path, std::string* err) {
+  auto slot = std::make_unique<Slot>();
+  slot->name = name;
+  slot->path = path;
+  slot->ev = std::make_unique<Evaluator>();
+  if (!slot->ev->init(path, opts_.data_dir, err)) {
+    if (err) *err = name + " (" + path + "): " + *err;
+    return false;
+  }
+  slot->search = std::make_unique<Searcher>(*slot->ev, opts_.threads, opts_.hash_mb);
+  std::lock_guard<std::mutex> g(mutex_);
+  for (auto& n : nets_)
+    if (n->name == name) {
+      n = std::move(slot);
+      return true;
+    }
+  nets_.push_back(std::move(slot));
+  return true;
+}
+
+std::vector<std::string> Engine::network_names() const {
+  std::vector<std::string> v;
+  for (const auto& n : nets_) v.push_back(n->name);
+  return v;
+}
+
+Engine::Slot& Engine::select(const json& req) {
+  std::string want;
+  if (req.contains("options") && req["options"].contains("network")) want = req["options"]["network"].get<std::string>();
+  if (want.empty()) return *nets_[0];
+  for (auto& n : nets_)
+    if (n->name == want) return *n;
+  std::string names;
+  for (auto& n : nets_) names += (names.empty() ? "" : ", ") + n->name;
+  bad("unknown network '" + want + "' (available: " + names + ")");
+}
+
+void Engine::apply_cube_head(Slot& s, const json& req, HeadGuard& g) {
+  g.ev = s.ev.get();
+  g.prev = s.ev->use_cube_head();
+  if (req.contains("options") && req["options"].contains("cube_head"))
+    s.ev->set_use_cube_head(req["options"]["cube_head"].get<bool>());
 }
 
 void Engine::set_threads(int t) {
   std::lock_guard<std::mutex> g(mutex_);
   opts_.threads = t;
-  search_->set_threads(t);
+  for (auto& n : nets_) n->search->set_threads(t);
 }
 
 json Engine::info() const {
   return {{"name", kName},
           {"version", kVersion},
-          {"network", ev_.network().id},
-          {"threads", search_ ? search_->threads() : 0},
+          {"network", net_id()},
+          {"networks", [&] {
+             json a = json::array();
+             for (const auto& n : nets_)
+               a.push_back({{"name", n->name},
+                            {"id", n->ev->network().id},
+                            {"file", n->path},
+                            {"hidden", n->ev->network().H},
+                            {"cube_head", n->ev->network().has_cube_head()}});
+             return a;
+           }()},
+          {"threads", nets_.empty() ? 0 : nets_[0]->search->threads()},
           {"default_plies", opts_.default_plies},
           {"cube_extra_plies", opts_.cube_extra_plies},
           {"max_plies", opts_.max_plies},
@@ -165,7 +221,10 @@ json Engine::evaluate(const json& req) {
   Position p = parse_request(req);
   SearchConfig cfg = parse_cube_options(req);
   std::lock_guard<std::mutex> g(mutex_);
-  CubeResult r = search_->analyze_cube(p.board, p.match, cfg);
+  Slot& net = select(req);
+  HeadGuard hg;
+  apply_cube_head(net, req, hg);
+  CubeResult r = net.search->analyze_cube(p.board, p.match, cfg);
   CubeModel cm(p.match);
   const bool jac = p.match.money() && p.match.jacoby && p.match.owner == CubeOwner::Center && p.match.cube == 1;
   const float cubeless = cm.dead(r.analysis.probs, p.match.cube, jac);
@@ -192,7 +251,10 @@ json Engine::cube(const json& req) {
   Position p = parse_request(req);
   SearchConfig cfg = parse_cube_options(req);
   std::lock_guard<std::mutex> g(mutex_);
-  CubeResult r = search_->analyze_cube(p.board, p.match, cfg);
+  Slot& net = select(req);
+  HeadGuard hg;
+  apply_cube_head(net, req, hg);
+  CubeResult r = net.search->analyze_cube(p.board, p.match, cfg);
   json out = cube_json(r, p);
   out["plies"] = r.plies;
   out["probabilities"] = probs_json(r.analysis.probs);
@@ -208,7 +270,10 @@ json Engine::move(const json& req) {
   int limit = 20;
   if (req.contains("options") && req["options"].contains("max_moves")) limit = req["options"]["max_moves"].get<int>();
   std::lock_guard<std::mutex> g(mutex_);
-  MoveAnalysis a = search_->analyze_moves(p.board, p.dice[0], p.dice[1], p.match, cfg);
+  Slot& net = select(req);
+  HeadGuard hg;
+  apply_cube_head(net, req, hg);
+  MoveAnalysis a = net.search->analyze_moves(p.board, p.dice[0], p.dice[1], p.match, cfg);
   json moves = json::array();
   const bool match = !p.match.money();
   for (size_t i = 0; i < a.moves.size() && int(i) < limit; ++i) {
@@ -262,6 +327,9 @@ json Engine::rollout(const json& req) {
   if (o.contains("seed")) rc.seed = o["seed"].get<uint64_t>();
   if (rc.trials < 1 || rc.trials > 1000000) bad("trials must be 1..1000000");
   std::lock_guard<std::mutex> g(mutex_);
+  Slot& net = select(req);
+  HeadGuard hg;
+  apply_cube_head(net, req, hg);
   CubeModel cm(p.match);
   auto result_json = [&](const RolloutResult& r, const CubeModel& m) {
     json j = {{"probabilities", probs_json(r.probs)},
@@ -274,14 +342,14 @@ json Engine::rollout(const json& req) {
     return j;
   };
   if (!p.dice[0]) {
-    RolloutResult r = bg::rollout(ev_, p.board, p.match, rc, search_->pool());
+    RolloutResult r = bg::rollout(*net.ev, p.board, p.match, rc, net.search->pool());
     json j = result_json(r, cm);
     j["note"] = "cubeful value assumes the player on roll does not double now";
     return j;
   }
   int cands = o.contains("candidates") ? o["candidates"].get<int>() : 4;
   SearchConfig sc = SearchConfig::for_plies(1);
-  MoveAnalysis a = search_->analyze_moves(p.board, p.dice[0], p.dice[1], p.match, sc);
+  MoveAnalysis a = net.search->analyze_moves(p.board, p.dice[0], p.dice[1], p.match, sc);
   json moves = json::array();
   const MatchState opp = p.match.swapped();
   CubeModel ocm(opp);
@@ -291,7 +359,7 @@ json Engine::rollout(const json& req) {
     if (m.move.after.side[0] == 0) {
       j = {{"probabilities", probs_json(m.probs)}, {"cubeful_equity", m.emg}, {"trials", 0}};
     } else {
-      RolloutResult r = bg::rollout(ev_, m.move.after.swapped(), opp, rc, search_->pool());
+      RolloutResult r = bg::rollout(*net.ev, m.move.after.swapped(), opp, rc, net.search->pool());
       // Seen from the mover: invert the opponent's result.
       RolloutResult mine = r;
       mine.probs = r.probs.inverted();

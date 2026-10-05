@@ -32,6 +32,7 @@ class Evaluator {
   // enabled, otherwise the fixed formula (cube_efficiency).
   void cube_x(const Board& b, float x[3]) const;
   void set_use_cube_head(bool on) { use_cube_head_ = on; }
+  bool use_cube_head() const { return use_cube_head_; }
   bool cube_head_active() const { return use_cube_head_ && net_.has_cube_head(); }
 
   // Probabilities of a finished game from the view of board side 0 (the winner

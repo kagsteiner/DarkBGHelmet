@@ -28,6 +28,14 @@ Start the server:
 bgserver --port 8080 --threads 16 --net nets/latest.bgnn --plies 3
 ```
 
+Several networks can be loaded at once and chosen per request. For example:
+
+```
+bgserver --net nets/latest.bgnn --add-net fast=nets/iter1_cube.bgnn
+```
+
+Then `"options": {"network": "fast"}` selects the second one. `/v1/info` lists all loaded networks.
+
 | Method | Path | Purpose |
 |---|---|---|
 | GET  | `/v1/info` | Engine name, version, network id, limits |
@@ -77,6 +85,8 @@ bgserver --port 8080 --threads 16 --net nets/latest.bgnn --plies 3
 | `plies` | Search depth, 1..7 |
 | `cube_extra_plies` | Cube decisions (`/v1/cube`, `/v1/evaluate`) search this many plies deeper than `plies`. Default 2 (server flag `--cube-extra`); 0 = same depth |
 | `cube_plies` | Exact depth for cube decisions (overrides `cube_extra_plies`) |
+| `network` | Name of a loaded network (see `/v1/info`); default `default`. Load more with `bgserver --add-net name=file` |
+| `cube_head` | `false` uses the cube formula instead of the network's learned cube head for this request |
 | `cubeful` | Cubeful (default) or cubeless search |
 | `candidates` | Maximum number of plays searched at full depth |
 | `max_moves` | Maximum number of plays returned |
@@ -170,6 +180,7 @@ stdout, one per line:
 | `bgei` | `id name …`, `id network …`, `option …` lines, then `bgeiok` |
 | `isready` | `readyok` |
 | `setoption name Threads\|Plies\|Net\|CubeExtraPlies value <v>` | (none, or `error …`) |
+| `setoption name AddNet value <name>=<file>` / `setoption name Network value <name>` | Load an additional network / use it for the following commands |
 | `position start` / `position xgid <XGID>` / `position gnubg <posid>[:<matchid>]` | (none) |
 | `match length <n> score <a> <b> cube <c> owner <center\|onroll\|opponent> crawford <0\|1>` | (none) |
 | `go move dice <d1d2> [plies n]` | `info rank … move … equity … diff … plies …` lines, then `bestmove <move>` |

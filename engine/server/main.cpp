@@ -1,5 +1,5 @@
 // bgserver: HTTP JSON API for the engine.
-//   bgserver [--port 8080] [--host 127.0.0.1] [--net nets/latest.bgnn] [--threads N] [--plies 3] [--cube-extra 2]
+//   bgserver [--port 8080] [--host 127.0.0.1] [--net nets/latest.bgnn] [--threads N] [--plies 3] [--cube-extra 2] [--add-net name=file ...]
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -19,6 +19,13 @@ int main(int argc, char** argv) {
     if (a == "--port") port = std::stoi(next());
     else if (a == "--host") host = next();
     else if (a == "--net") o.net_path = next();
+    else if (a == "--add-net") {
+      // --add-net name=path, repeatable; selected per request with "options": {"network": "name"}
+      std::string v = next();
+      size_t eq = v.find('=');
+      if (eq == std::string::npos) { std::fprintf(stderr, "--add-net expects name=path\n"); return 1; }
+      o.extra_nets.push_back({v.substr(0, eq), v.substr(eq + 1)});
+    }
     else if (a == "--data") o.data_dir = next();
     else if (a == "--threads") o.threads = std::stoi(next());
     else if (a == "--plies") o.default_plies = std::stoi(next());
@@ -69,8 +76,10 @@ int main(int argc, char** argv) {
     res.set_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     res.status = 204;
   });
-  std::printf("%s %s (net %s) listening on http://%s:%d\n", bg::Engine::kName, bg::Engine::kVersion,
-              engine.net_id().c_str(), host.c_str(), port);
+  std::string nets;
+  for (const auto& n : engine.network_names()) nets += (nets.empty() ? "" : ", ") + n;
+  std::printf("%s %s (networks: %s; default %s) listening on http://%s:%d\n", bg::Engine::kName, bg::Engine::kVersion,
+              nets.c_str(), engine.net_id().c_str(), host.c_str(), port);
   std::fflush(stdout);
   if (!srv.listen(host, port)) {
     std::fprintf(stderr, "cannot listen on %s:%d\n", host.c_str(), port);
