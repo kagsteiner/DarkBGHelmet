@@ -77,3 +77,37 @@ tools/label_run.sh 14 1200000 2          # 14 gnubg workers write data/labels/*.
   evaluated every legal play.
 * `bgcli bench` reports our average equity loss per decision against those evaluations.
 * `tools/play_vs_gnubg.py` plays duplicate money games with the cube against gnubg.
+
+## How the networks were trained, and the role of GNU Backgammon
+
+The networks were initially trained with the help of
+[GNU Backgammon](https://www.gnu.org/software/gnubg/), and this project is grateful for it:
+
+* **Bootstrap.** The first networks learned from gnubg's evaluations. gnubg played games
+  against itself (later also against our engine), and every position was labelled with
+  gnubg's 2-ply (= XG 3-ply) evaluation via its Python scripting interface
+  (`tools/gnubg_label.py`). About 40 million positions were labelled this way.
+* **Expert iteration.** From there on, the engine taught itself: positions were relabelled
+  with DarkBGHelmet's own 3-ply search, and new networks were trained on those labels only.
+  The current default network (`nets/latest.bgnn`, 1024/128/64 with a cube head) was trained
+  on our own search labels. Its lineage, however, goes back to the gnubg-trained networks.
+* **Cube head.** The learned cube efficiency was trained on DarkBGHelmet's own 4-ply cubeful
+  search.
+* **Testing.** gnubg also served as the reference throughout: for verifying move generation,
+  the bearoff database and the cube formulas, and as the opponent in strength tests
+  (`docs/RESULTS.md`).
+
+No gnubg source code is part of this repository. gnubg is only run as an external program.
+
+## License
+
+DarkBGHelmet is released under the [MIT License](LICENSE).
+
+Bundled third-party components keep their own licences:
+
+* [cpp-httplib](https://github.com/yhirose/cpp-httplib) (MIT), `third_party/httplib.h`
+* [nlohmann/json](https://github.com/nlohmann/json) (MIT), `third_party/json.hpp`
+* [doctest](https://github.com/doctest/doctest) (MIT), `third_party/doctest.h`
+* The Kazaross-XG2 match equity table (`engine/eval/met_kazaross_xg2.inc`) is © 2011 Neil
+  Kazaross and was transcribed for gnubg by Michael Petch. It is redistributed under its
+  original permissive notice, which is preserved in the file.
