@@ -1,7 +1,13 @@
 # Running the engine on an Ubuntu VPS (no Docker)
 
-The engine is one native binary, `bgserver`, plus a network file of about 2 MB. It runs under PM2
+The engine is one native binary, `bgserver`, plus a network file of about 4 MB. It runs under PM2
 like your Node apps, listens only on `127.0.0.1`, and your Node app calls it over HTTP.
+
+## Quick way: the build script
+
+`deploy/builddarkbg.sh` does everything below in one go: clone or update, build, and start
+or restart under PM2, on port 3050 by default. Copy it to your home folder and run it again
+after every update. The sections below explain the individual steps.
 
 ## 1. Get the code onto the VPS
 
@@ -9,7 +15,7 @@ The repository is self-contained: the network is in `nets/latest.bgnn` and the
 dependencies are in `third_party/`. Choose one way:
 
 * **Through a private git remote (GitHub, GitLab, …).**
-  * On the Mac: `git remote add origin <url>` and `git push -u origin main --tags`.
+  * On the Mac: `git remote add origin <url>` and `git push -u origin master --tags`.
   * On the VPS: `git clone <url> ~/darkbghelmet`.
 * **Copy it directly** from the Mac:
 
