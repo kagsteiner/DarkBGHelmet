@@ -373,7 +373,8 @@ void Searcher::eval_nodes_parallel(const Root& R, const std::vector<Board>& boar
   }
 }
 
-MoveAnalysis Searcher::analyze_moves(const Board& b, int d1, int d2, const MatchState& ms, const SearchConfig& cfg) {
+MoveAnalysis Searcher::analyze_moves(const Board& b, int d1, int d2, const MatchState& ms, const SearchConfig& cfg,
+                                     const Board* must_include) {
   const auto t0 = std::chrono::steady_clock::now();
   stop_.store(false);
   nodes_.store(0);
@@ -444,6 +445,15 @@ MoveAnalysis Searcher::analyze_moves(const Board& b, int d1, int d2, const Match
     while (n < int(res.moves.size()) && n < keep && res.moves[n].plies == d - 1 &&
            best - R.cm[0].to_emg(res.moves[n].value) <= width)
       ++n;
+    if (must_include) {
+      // Keep the requested play among the candidates (move it into slot n).
+      for (int i = n; i < int(res.moves.size()); ++i)
+        if (res.moves[i].move.after == *must_include && res.moves[i].plies == d - 1) {
+          std::swap(res.moves[i], res.moves[n]);
+          ++n;
+          break;
+        }
+    }
     evaluate_at(n, d);
     sort_moves();
   }
@@ -479,7 +489,9 @@ CubeResult Searcher::analyze_cube(const Board& b, const MatchState& ms, const Se
   CubeAnalysis& a = res.analysis;
   // Start from the static analysis for the bookkeeping fields, then use the
   // searched values.
-  a = bg::analyze_cube(p, ms, cube_efficiency(b));
+  float xs[3];
+  ev_.cube_x(b, xs);  // learned cube efficiency for (centered, owned, opponent owns)
+  a = bg::analyze_cube(p, ms, xs[ms.owner == CubeOwner::Center ? 0 : (ms.owner == CubeOwner::Me ? 1 : 2)]);
   a.nd = v[0];
   if (dt_idx >= 0) a.dt = v[dt_idx];
   a.dp = R.cm[0].value(ms.cube);

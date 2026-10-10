@@ -95,7 +95,10 @@ class Searcher {
   CubeResult analyze_cube(const Board& b, const MatchState& ms, const SearchConfig& cfg);
 
   // Ranks the legal plays for a roll.
-  MoveAnalysis analyze_moves(const Board& b, int d1, int d2, const MatchState& ms, const SearchConfig& cfg);
+  // `must_include` (optional): the position after a specific play (mover's view)
+  // that is always kept among the candidates, so it is evaluated at full depth.
+  MoveAnalysis analyze_moves(const Board& b, int d1, int d2, const MatchState& ms, const SearchConfig& cfg,
+                             const Board* must_include = nullptr);
 
   // Cubeless probabilities of a position at depth (side 0 to roll).
   Probs evaluate(const Board& b, const MatchState& ms, int plies);

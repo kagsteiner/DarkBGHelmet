@@ -263,9 +263,24 @@ json Engine::move(const json& req) {
   SearchConfig cfg = parse_options(req);
   int limit = 20;
   if (req.contains("options") && req["options"].contains("max_moves")) limit = req["options"]["max_moves"].get<int>();
+  // Optional "played": the play actually made, evaluated at full depth and
+  // reported with its rank and equity loss.
+  std::vector<Move> legal;
+  generate_moves(p.board, p.dice[0], p.dice[1], legal);
+  int played_idx = -1;
+  if (req.contains("played")) {
+    const std::string pm = req["played"].get<std::string>();
+    if (legal.size() == 1 && legal[0].n == 0) {
+      played_idx = 0;  // no legal move: only "pass" is possible
+    } else {
+      played_idx = find_move(legal, p.board, pm);
+      if (played_idx < 0) bad("'played' is not a legal play for these dice: " + pm);
+    }
+  }
   std::lock_guard<std::mutex> g(mutex_);
   Slot& net = select(req);
-  MoveAnalysis a = net.search->analyze_moves(p.board, p.dice[0], p.dice[1], p.match, cfg);
+  MoveAnalysis a = net.search->analyze_moves(p.board, p.dice[0], p.dice[1], p.match, cfg,
+                                             played_idx >= 0 ? &legal[played_idx].after : nullptr);
   json moves = json::array();
   const bool match = !p.match.money();
   for (size_t i = 0; i < a.moves.size() && int(i) < limit; ++i) {
@@ -282,13 +297,37 @@ json Engine::move(const json& req) {
     if (match) j["mwc"] = m.value;
     moves.push_back(j);
   }
-  return {{"dice", {p.dice[0], p.dice[1]}},
+  json out = {{"dice", {p.dice[0], p.dice[1]}},
           {"plies", cfg.plies},
           {"legal_moves", a.moves.size()},
           {"moves", moves},
           {"best", a.moves.empty() ? "" : a.moves[0].move.str()},
           {"nodes", a.nodes},
           {"time_ms", a.seconds * 1000}};
+  if (played_idx >= 0) {
+    for (size_t i = 0; i < a.moves.size(); ++i) {
+      const MoveEval& m = a.moves[i];
+      if (m.move.after != legal[played_idx].after) continue;
+      // Rank among all plays by equity (plays not searched to full depth are
+      // compared with their shallower value).
+      int rank = 1;
+      for (const MoveEval& o : a.moves)
+        if (o.move.after != m.move.after && o.value > m.value) ++rank;
+      json pj = {{"move", m.move.str()},
+                 {"rank", rank},
+                 {"equity", m.emg},
+                 {"diff", m.emg - a.moves[0].emg},
+                 {"plies", m.plies},
+                 {"is_best", i == 0}};
+      if (!p.match.money()) {
+        pj["mwc"] = m.value;
+        pj["mwc_diff"] = m.value - a.moves[0].value;
+      }
+      out["played"] = pj;
+      break;
+    }
+  }
+  return out;
 }
 
 json Engine::analyze(const json& req) {

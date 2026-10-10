@@ -54,6 +54,7 @@ Then `"options": {"network": "fast"}` selects the second one. `/v1/info` lists a
   "match":    { "length": 7, "score": [2, 4], "cube": 2, "owner": "opponent",
                 "crawford": false, "jacoby": true, "beavers": true },
   "dice":     [5, 2],
+  "played":   "13/8 13/11",
   "options":  { "plies": 4, "cubeful": true, "candidates": 8, "max_moves": 20 }
 }
 ```
@@ -77,6 +78,11 @@ Then `"options": {"network": "fast"}` selects the second one. `/v1/info` lists a
 * `owner`: one of `center`, `onroll`, `opponent`.
 
 **`dice`** is required for `/v1/move`, unless the position ID already includes dice.
+
+**`played`** (optional, `/v1/move` and `/v1/analyze`) is the play actually made, in any common
+notation. It's always searched at the full depth, and the response contains
+`"played": {move, rank, equity, diff, plies, is_best}` (plus `mwc` and `mwc_diff` in match
+play). An illegal play gives HTTP 400.
 
 **`options`**:
 

@@ -15,6 +15,8 @@ The design rationale is in [PLAN.md](PLAN.md). The interfaces are described in
   match handling, and training.
 * **Results against gnubg:** [docs/RESULTS.md](docs/RESULTS.md).
 * **Running it on a server:** [deploy/DEPLOY.md](deploy/DEPLOY.md).
+* **Using it from your own app** (analysis, grading played moves, quizzes):
+  [docs/CLIENT_GUIDE.md](docs/CLIENT_GUIDE.md).
 
 ## Build
 
