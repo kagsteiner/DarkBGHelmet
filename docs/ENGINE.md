@@ -399,6 +399,81 @@ Optional **variance reduction** subtracts each turn's luck: the static value aft
 minus the average over all 21 rolls. That lowers the variance about 16×, but also costs about 21×
 per game with 1-ply play, so it's off by default.
 
+Further details:
+
+* **Cube decisions** inside rollouts and the cubeful value at a truncation point use the learned
+  cube head.
+* **One game at a time:** `rollout_trial()` plays a single game. Its trial index fixes the dice,
+  so the same index gives the same dice from any position (common random numbers).
+* **Frozen cube** (`cube_actions = false`, for truncated rollouts only): no cube decisions during
+  the rollout; the cubeful value is taken at the truncation point. That removes the noise of
+  mid-game double/pass jumps. In a rollout played to the end it would lose the cube's value
+  completely, which is why full rollouts keep real cube decisions.
+
+---
+
+## 6a. Experimental: time-controlled rollout search (`engine/search/mcsearch.cpp`)
+
+An alternative to deep expectimax, kept as an optional mode for deep analysis on many cores. It's
+not the default anywhere; it's only used when a request asks for it (`options.mc` in the API,
+`MCTime` in BGEI, `BG_MC_A`/`BG_MC_B` in `bgcli duel`).
+
+**Checker play:**
+
+1. A 2- or 3-ply pre-ranking with wide filters. If only one play lies within `window` of the
+   best, it decides at once (no rollouts; important under time controls).
+2. Each remaining candidate is a bandit arm. Until the time budget is used up, the next batch of
+   truncated rollouts goes to the challenger most likely to beat the current leader (**paired
+   Thompson sampling**).
+3. Candidates are compared by their **per-game difference** to the leader on identical dice. The
+   pre-ranking difference acts as a prior worth `prior_games` paired games.
+4. Rollouts use the frozen cube and a cubeful evaluation at the truncation point.
+5. The play with the best posterior value wins.
+
+**Cube decisions:** "no double" and "double/take" are rolled out on identical dice when the
+pre-ranking says the decision is close (`cube_window`).
+
+**Parameters** (`McConfig`):
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `time_ms` | 1000 | budget per checker decision |
+| `cube_time_ms` | `time_ms`/2 | budget per close cube decision |
+| `truncate` | 7 (3 performed best) | rollout depth in plies |
+| `batch` | 36 | games per sampling step |
+| `prefilter_plies` | 2 | depth of the pre-ranking |
+| `max_candidates` | 8 | how many plays enter the race |
+| `window` | 0.20 | candidates within this EMG distance of the best |
+| `prior_games` | 36 (100 performed best) | weight of the pre-ranking |
+| `cube_window` | 0.25 | margin below which a cube decision is rolled out |
+| `paired` | true | paired comparison against the leader |
+| `rollout_cube_actions` | false | cube decisions inside the rollouts |
+| `variance_reduction` | false | luck reduction inside the rollouts |
+
+**Measured** (duplicate money games with the cube, single-threaded, equal thinking time):
+
+| Budget | Opponent | Result for the rollout search |
+|---|---|---|
+| 100 ms, first version (independent arms, cube actions, prior 36) | 3-ply search | −0.31 ± 0.08 ppg |
+| 100 ms, paired, frozen cube, prior 100, truncation 2–5 | 3-ply search | between −0.04 and −0.08 (± 0.045 each); truncation 3 over 6,000 games about −0.01, i.e. equal |
+| 1 s (3-ply pre-ranking, truncation 3) | 4-ply search | −0.15 ± 0.09, while using only 60% of the 4-ply time |
+
+Lessons:
+
+* **Rollout noise is the limiting factor.** Spread of a game's value (top two plays, same dice):
+
+  | Rollout variant | Single game | Paired difference |
+  |---|---|---|
+  | With cube actions, truncation 7 | 0.98 | 0.89 |
+  | Frozen cube, truncation 7 | 0.70 | 0.54 |
+  | Frozen cube, truncation 3 | 0.65 | 0.41 |
+
+* **The pre-ranking prior has to be weighted realistically.** A weak prior lets a few noisy games
+  overrule a good 2-ply judgement.
+* **At the budgets tested, the approach is equivalent to the fixed-depth search but not better.**
+  Its strengths are an anytime result, natural time control, and scaling with many cores, which
+  makes it a candidate for very deep analysis on large machines.
+
 ---
 
 ## 7. Training
@@ -476,7 +551,8 @@ See `docs/RESULTS.md`. In short:
 ## 10. Possible next steps
 
 * **Time controls** (time per move plus a match budget) with iterative deepening, as soon as
-  engine interfaces such as BGBlitz's support them.
+  engine interfaces such as BGBlitz's support them. The experimental rollout search (§6a)
+  already respects time budgets.
 * **Faster deep search:** for example a cheaper evaluator to pre-rank plays at inner nodes, or
   selective deepening.
 * **Better teachers:** 4-ply or rollout labels to go beyond the current plateau.

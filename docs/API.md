@@ -152,6 +152,38 @@ The response contains:
   * `match_equity`: `{cubeless, cubeful}` as MWC
   * `match`: `{length, away, crawford, cube, owner}`
 
+### Experimental: time-controlled rollout search
+
+`/v1/move` and `/v1/cube` (and so `/v1/analyze`) accept `"options": {"mc": {...}}`. Instead of
+a fixed-depth search, the engine then uses a 2/3-ply pre-ranking plus truncated rollouts with
+paired Thompson sampling within a time budget:
+
+```json
+"options": { "mc": { "time_ms": 2000, "truncate": 3, "prior_games": 100, "prefilter_plies": 3 } }
+```
+
+Fields:
+
+| Field | Default |
+|---|---|
+| `time_ms` | 1000 |
+| `cube_time_ms` | half of `time_ms` |
+| `truncate` | 7 |
+| `batch` | 36 |
+| `prefilter_plies` | 2 |
+| `candidates` | 8 |
+| `window` | 0.20 |
+| `prior_games` | 36 |
+| `cube_window` | 0.25 |
+| `variance_reduction` | false |
+
+The response gains an `mc` object (`candidates`, `games`, `batches`, `time_ms`, `used_rollouts`),
+and each play gets a `rollouts` count.
+
+At equal time this mode is about as strong as the normal search, not stronger (see
+`docs/ENGINE.md` §6a). It's meant for deep analysis on machines with many cores, not for small
+servers.
+
 ### `/v1/rollout`
 
 `options` for rollouts:
