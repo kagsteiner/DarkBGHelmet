@@ -4,6 +4,7 @@
 
 #include "core/ids.hpp"
 #include "eval/cube.hpp"
+#include "search/mcsearch.hpp"
 #include "search/rollout.hpp"
 #include "search/search.hpp"
 
@@ -89,4 +90,27 @@ TEST_CASE("rollout of a trivial bearoff") {
   RolloutResult r = rollout(ev, b, ms, rc, pool);
   CHECK(r.probs[kWin] == doctest::Approx(1.0));
   CHECK(r.probs[kWinG] == doctest::Approx(1.0));
+}
+
+TEST_CASE("MC search: time budget, rollouts and consistent cube values") {
+  const Evaluator& ev = test_evaluator();
+  Searcher s(ev, 2, 16);
+  MatchState ms;
+  McConfig mc;
+  mc.time_ms = 150;
+  mc.window = 1.0f;  // random test network: force several candidates
+  McStats st;
+  MoveAnalysis a = mc_analyze_moves(s, ev, Board::start(), 6, 4, ms, mc, &st);
+  REQUIRE(a.moves.size() == 15);
+  CHECK(st.candidates >= 2);
+  CHECK(st.games > 0);
+  CHECK(st.seconds < 0.5);
+  CHECK(a.moves[0].rollouts > 0);
+  for (size_t i = 1; i < a.moves.size(); ++i)
+    if (a.moves[i].rollouts > 0) CHECK(a.moves[i].value <= a.moves[0].value + 1e-6f);
+  mc.cube_window = 10.f;  // always roll out
+  CubeResult c = mc_analyze_cube(s, ev, Board::start(), ms, mc, &st);
+  CHECK(st.used_rollouts);
+  CHECK(std::isfinite(c.analysis.nd));
+  CHECK(std::isfinite(c.analysis.dt));
 }

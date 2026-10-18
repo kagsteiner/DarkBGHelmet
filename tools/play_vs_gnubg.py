@@ -57,6 +57,14 @@ def ask(cmd, until):
 
 
 ask("bgei", "bgeiok")
+# Time-controlled rollout search for our engine (BG_MC_TIME in ms per checker
+# decision; optional BG_MC_CUBETIME, BG_MC_TRUNC, BG_MC_BATCH, BG_MC_PRE, BG_MC_CAND, BG_MC_PRIOR).
+for env_name, opt in (("BG_MC_TIME", "MCTime"), ("BG_MC_CUBETIME", "MCCubeTime"), ("BG_MC_TRUNC", "MCTruncate"),
+                      ("BG_MC_BATCH", "MCBatch"), ("BG_MC_PRE", "MCPrefilter"), ("BG_MC_CAND", "MCCandidates"),
+                      ("BG_MC_PRIOR", "MCPrior")):
+    if os.environ.get(env_name):
+        eng.stdin.write("setoption name %s value %s\n" % (opt, os.environ[env_name]))
+        eng.stdin.flush()
 if os.environ.get("BG_CANDIDATES"):
     eng.stdin.write("setoption name Candidates value %s\n" % os.environ["BG_CANDIDATES"])
     eng.stdin.flush()

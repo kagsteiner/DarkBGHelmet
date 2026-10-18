@@ -3,6 +3,7 @@
 #include <stdexcept>
 #include <thread>
 
+#include "search/mcsearch.hpp"
 #include "search/rollout.hpp"
 
 using nlohmann::json;
@@ -181,6 +182,35 @@ SearchConfig Engine::parse_options(const json& req) const {
   return cfg;
 }
 
+// "options": {"mc": {"time_ms": 1000, ...}} switches to the time-controlled
+// rollout search (engine/search/mcsearch.hpp). Returns false if not requested.
+static bool parse_mc(const json& req, McConfig& mc) {
+  if (!req.contains("options") || !req["options"].contains("mc")) return false;
+  const json& m = req["options"]["mc"];
+  if (!m.is_object()) throw std::invalid_argument("options.mc must be an object");
+  auto geti = [&](const char* k, int& v) { if (m.contains(k)) v = m[k].get<int>(); };
+  auto getf = [&](const char* k, float& v) { if (m.contains(k)) v = m[k].get<float>(); };
+  geti("time_ms", mc.time_ms);
+  geti("cube_time_ms", mc.cube_time_ms);
+  geti("truncate", mc.truncate);
+  geti("batch", mc.batch);
+  geti("prefilter_plies", mc.prefilter_plies);
+  geti("candidates", mc.max_candidates);
+  getf("window", mc.window);
+  getf("prior_games", mc.prior_games);
+  getf("cube_window", mc.cube_window);
+  if (m.contains("variance_reduction")) mc.variance_reduction = m["variance_reduction"].get<bool>();
+  if (mc.time_ms < 1 || mc.time_ms > 600000) throw std::invalid_argument("mc.time_ms must be 1..600000");
+  if (mc.truncate < 0 || mc.batch < 1 || mc.prefilter_plies < 1 || mc.prefilter_plies > 4)
+    throw std::invalid_argument("invalid mc parameters");
+  return true;
+}
+
+static json mc_stats_json(const McStats& st) {
+  return {{"candidates", st.candidates}, {"games", st.games}, {"batches", st.batches},
+          {"time_ms", st.seconds * 1000}, {"used_rollouts", st.used_rollouts}};
+}
+
 SearchConfig Engine::parse_cube_options(const json& req) const {
   SearchConfig base = parse_options(req);
   json o = req.contains("options") ? req["options"] : json::object();
@@ -248,8 +278,13 @@ json Engine::cube(const json& req) {
   SearchConfig cfg = parse_cube_options(req);
   std::lock_guard<std::mutex> g(mutex_);
   Slot& net = select(req);
-  CubeResult r = net.search->analyze_cube(p.board, p.match, cfg);
+  McConfig mc;
+  McStats mst;
+  const bool use_mc = parse_mc(req, mc);
+  CubeResult r = use_mc ? mc_analyze_cube(*net.search, *net.ev, p.board, p.match, mc, &mst)
+                        : net.search->analyze_cube(p.board, p.match, cfg);
   json out = cube_json(r, p);
+  if (use_mc) out["mc"] = mc_stats_json(mst);
   out["plies"] = r.plies;
   out["probabilities"] = probs_json(r.analysis.probs);
   out["nodes"] = r.nodes;
@@ -279,8 +314,12 @@ json Engine::move(const json& req) {
   }
   std::lock_guard<std::mutex> g(mutex_);
   Slot& net = select(req);
-  MoveAnalysis a = net.search->analyze_moves(p.board, p.dice[0], p.dice[1], p.match, cfg,
-                                             played_idx >= 0 ? &legal[played_idx].after : nullptr);
+  McConfig mc;
+  McStats mst;
+  const bool use_mc = parse_mc(req, mc);
+  MoveAnalysis a = use_mc ? mc_analyze_moves(*net.search, *net.ev, p.board, p.dice[0], p.dice[1], p.match, mc, &mst)
+                          : net.search->analyze_moves(p.board, p.dice[0], p.dice[1], p.match, cfg,
+                                                      played_idx >= 0 ? &legal[played_idx].after : nullptr);
   json moves = json::array();
   const bool match = !p.match.money();
   for (size_t i = 0; i < a.moves.size() && int(i) < limit; ++i) {
@@ -292,6 +331,7 @@ json Engine::move(const json& req) {
               {"equity", m.emg},
               {"diff", m.emg - a.moves[0].emg},
               {"plies", m.plies},
+              {"rollouts", m.rollouts},
               {"probabilities", probs_json(m.probs)},
               {"position_after", position_json(after)}};
     if (match) j["mwc"] = m.value;
@@ -304,6 +344,7 @@ json Engine::move(const json& req) {
           {"best", a.moves.empty() ? "" : a.moves[0].move.str()},
           {"nodes", a.nodes},
           {"time_ms", a.seconds * 1000}};
+  if (use_mc) out["mc"] = mc_stats_json(mst);
   if (played_idx >= 0) {
     for (size_t i = 0; i < a.moves.size(); ++i) {
       const MoveEval& m = a.moves[i];

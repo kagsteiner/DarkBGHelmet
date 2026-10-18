@@ -41,6 +41,7 @@ int main(int argc, char** argv) {
   int candidates = 0;  // 0 = engine default
   int sampled = 0, full_layers = 0;
   std::string network;  // empty = default network
+  json mc = json::object();  // MC search options (empty = fixed-depth search)
 
   std::string line;
   while (std::getline(std::cin, line)) {
@@ -59,6 +60,8 @@ int main(int argc, char** argv) {
                   << "option name SampledRolls type spin default 0 min 0 max 21\n"
                   << "option name AddNet type string (name=path)\n"
                   << "option name Network type string default default\n"
+                  << "option name MCTime type spin default 0 (ms per checker decision; 0 = fixed-depth search)\n"
+                  << "option name MCCubeTime / MCTruncate / MCBatch / MCPrefilter / MCCandidates / MCPrior\n"
                   << "option name FullLayers type spin default 0 min 0 max 8\n"
                   << "bgeiok" << std::endl;
       } else if (cmd == "isready") {
@@ -75,6 +78,13 @@ int main(int argc, char** argv) {
         else if (name == "Candidates") candidates = std::stoi(value);
         else if (name == "SampledRolls") sampled = std::stoi(value);
         else if (name == "Network") network = value == "default" ? "" : value;
+        else if (name == "MCTime") { if (std::stoi(value) > 0) mc["time_ms"] = std::stoi(value); else mc = json::object(); }
+        else if (name == "MCCubeTime") mc["cube_time_ms"] = std::stoi(value);
+        else if (name == "MCTruncate") mc["truncate"] = std::stoi(value);
+        else if (name == "MCBatch") mc["batch"] = std::stoi(value);
+        else if (name == "MCPrefilter") mc["prefilter_plies"] = std::stoi(value);
+        else if (name == "MCCandidates") mc["candidates"] = std::stoi(value);
+        else if (name == "MCPrior") mc["prior_games"] = std::stof(value);
         else if (name == "AddNet") {
           size_t eq = value.find('=');
           if (eq == std::string::npos) std::cout << "error AddNet expects name=path" << std::endl;
@@ -112,6 +122,7 @@ int main(int argc, char** argv) {
         if (candidates > 0) req["options"]["candidates"] = candidates;
         if (sampled > 0) req["options"]["sampled_rolls"] = sampled;
         if (!network.empty()) req["options"]["network"] = network;
+        if (mc.contains("time_ms")) req["options"]["mc"] = mc;
         if (full_layers > 0) req["options"]["full_layers"] = full_layers;
         if (!match.empty()) req["match"] = match;
         while (is >> k) {

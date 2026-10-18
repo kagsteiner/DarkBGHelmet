@@ -21,7 +21,17 @@ struct RolloutConfig {
   int truncate = 0;          // plies after which the static evaluation is used (0 = play to the end)
   bool variance_reduction = false;  // ~16x lower variance but ~21x the cost per trial
   bool cubeful = true;
+  bool root_may_double = false;  // may the player to move at the root double before its first roll?
   uint64_t seed = 1;
+};
+
+// One rollout game. Trial index t fixes the dice (the first two rolls are
+// stratified over t), so the same t gives the same dice from any position:
+// common random numbers when comparing alternatives.
+struct RolloutTrial {
+  Probs probs;        // outcome (luck-corrected if variance reduction is on), root view
+  float cubeless = 0; // value at the root cube
+  float cubeful = 0;
 };
 
 struct RolloutResult {
@@ -35,6 +45,9 @@ struct RolloutResult {
 
 // Rolls out the position with side 0 to move (before its roll). The root player
 // does not get to double before its first roll, so `cubeful` is a "no double" value.
+RolloutTrial rollout_trial(const Evaluator& ev, const Board& root, const MatchState& ms, const RolloutConfig& cfg,
+                           int t);
+
 RolloutResult rollout(const Evaluator& ev, const Board& b, const MatchState& ms, const RolloutConfig& cfg,
                       ThreadPool& pool);
 

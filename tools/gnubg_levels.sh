@@ -1,6 +1,8 @@
 #!/bin/sh
 # Money-game matches against gnubg at equal depth, in parallel processes.
 #   tools/gnubg_levels.sh <our-plies> <gnubg-plies> <games-per-process> [processes] [tag]
+# Set BG_MC_TIME=<ms> (and optionally BG_MC_TRUNC, ...) in the environment to let our engine
+# use the time-controlled rollout search instead of a fixed depth.
 # Logs: data/vsgnu/<tag>_<n>.log; summary: tools/agg_matches.py data/vsgnu/<tag>_*.log
 cd "$(dirname "$0")/.."
 OP=$1; GP=$2; G=$3; N=${4:-16}; TAG=${5:-L${OP}v${GP}}

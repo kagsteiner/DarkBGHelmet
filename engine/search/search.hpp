@@ -63,6 +63,7 @@ struct MoveEval {
   float value = 0;    // cubeful (or cubeless) value, mover's view, value space
   float emg = 0;      // money-equivalent equity
   int plies = 1;      // depth this move was evaluated at
+  int rollouts = 0;   // rollout games (MC search only)
 };
 
 struct MoveAnalysis {

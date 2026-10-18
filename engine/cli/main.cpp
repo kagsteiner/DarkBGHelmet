@@ -19,8 +19,29 @@
 #include "eval/features.hpp"
 #include "search/search.hpp"
 #include "search/rollout.hpp"
+#include "search/mcsearch.hpp"
 
 using namespace bg;
+
+// MC search parameters from the environment (shared by duel, mcmove, mccube):
+// BG_MC_TRUNC, BG_MC_BATCH, BG_MC_PRE, BG_MC_CAND, BG_MC_WINDOW, BG_MC_PRIOR,
+// BG_MC_CUBEWIN, BG_MC_CUBEMS (cube budget, default half the move budget), BG_MC_VR.
+static McConfig mc_from_env(int time_ms) {
+  auto envi = [](const char* k, int d) { const char* v = std::getenv(k); return v ? std::atoi(v) : d; };
+  auto envf = [](const char* k, float d) { const char* v = std::getenv(k); return v ? float(std::atof(v)) : d; };
+  McConfig mc;
+  mc.time_ms = time_ms;
+  mc.cube_time_ms = envi("BG_MC_CUBEMS", -1);
+  mc.truncate = envi("BG_MC_TRUNC", mc.truncate);
+  mc.batch = envi("BG_MC_BATCH", mc.batch);
+  mc.prefilter_plies = envi("BG_MC_PRE", mc.prefilter_plies);
+  mc.max_candidates = envi("BG_MC_CAND", mc.max_candidates);
+  mc.window = envf("BG_MC_WINDOW", mc.window);
+  mc.prior_games = envf("BG_MC_PRIOR", mc.prior_games);
+  mc.cube_window = envf("BG_MC_CUBEWIN", mc.cube_window);
+  mc.variance_reduction = envi("BG_MC_VR", 0) != 0;
+  return mc;
+}
 
 int main(int argc, char** argv) {
   if (argc < 2) {
@@ -256,7 +277,8 @@ int main(int argc, char** argv) {
     // Money games, duplicate pairs (same dice, roles swapped). Points per game for A.
     // Environment: BG_DUEL_CUBE=1 plays with the cube (Jacoby on unless BG_JACOBY=0);
     // BG_CUBE_EXTRA=n adds plies for cube decisions. A network without a cube
-    // head plays with the cube formula.
+    // head plays with the cube formula. BG_MC_A=<ms> / BG_MC_B=<ms> make that side
+    // use the time-controlled rollout search (parameters: see mc_from_env).
     Evaluator ea, eb;
     std::string err;
     if (!ea.init(argv[2], "data", &err) || !eb.init(argv[3], "data", &err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; }
@@ -270,6 +292,10 @@ int main(int argc, char** argv) {
     std::vector<double> res(pairs, 0);
     std::atomic<int> next{0};
     std::atomic<long> doubles{0}, passes{0};
+    const int mca = env("BG_MC_A"), mcb = env("BG_MC_B");
+    const McConfig mcfg_a = mc_from_env(mca), mcfg_b = mc_from_env(mcb);
+    std::atomic<long long> ns_a{0}, ns_b{0};
+    std::atomic<long> moves_a{0}, moves_b{0};
     auto t0 = std::chrono::steady_clock::now();
     std::vector<std::thread> th;
     for (int t = 0; t < threads; ++t)
@@ -296,12 +322,22 @@ int main(int argc, char** argv) {
               ms.beavers = false;
               ms.cube = cubev;
               ms.owner = owner < 0 ? CubeOwner::Center : (owner == me ? CubeOwner::Me : CubeOwner::Opp);
+              // Decision helpers: fixed-depth search or MC search, timed per side.
+              auto cube_of = [&](bool side_a, Searcher& srch) {
+                const auto c0 = std::chrono::steady_clock::now();
+                CubeResult r = (side_a ? mca : mcb) > 0
+                                   ? mc_analyze_cube(srch, side_a ? ea : eb, b, ms, side_a ? mcfg_a : mcfg_b)
+                                   : srch.analyze_cube(b, ms, side_a ? qa : qb);
+                const long long dt = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - c0).count();
+                (side_a ? ns_a : ns_b) += dt;
+                return r;
+              };
               if (cube && !first && ms.owner != CubeOwner::Opp && CubeModel(ms).can_double(0, cubev)) {
-                CubeResult r = sx.analyze_cube(b, ms, a_to_move ? qa : qb);
+                CubeResult r = cube_of(a_to_move, sx);
                 const CubeDecision d = r.analysis.decision;
                 if (d == CubeDecision::DoubleTake || d == CubeDecision::DoublePass) {
                   doubles++;
-                  CubeResult ry = sy.analyze_cube(b, ms, a_to_move ? qb : qa);
+                  CubeResult ry = cube_of(!a_to_move, sy);
                   if (!ry.analysis.take) {
                     passes++;
                     sum += a_to_move ? cubev : -cubev;
@@ -317,7 +353,13 @@ int main(int argc, char** argv) {
               int d1 = int(rng() % 6) + 1, d2 = int(rng() % 6) + 1;
               while (first && d1 == d2) { d1 = int(rng() % 6) + 1; d2 = int(rng() % 6) + 1; }
               first = false;
-              MoveAnalysis an = sx.analyze_moves(b, d1, d2, ms, a_to_move ? ca : cb);
+              const auto m0 = std::chrono::steady_clock::now();
+              MoveAnalysis an = (a_to_move ? mca : mcb) > 0
+                                    ? mc_analyze_moves(sx, a_to_move ? ea : eb, b, d1, d2, ms, a_to_move ? mcfg_a : mcfg_b)
+                                    : sx.analyze_moves(b, d1, d2, ms, a_to_move ? ca : cb);
+              (a_to_move ? ns_a : ns_b) +=
+                  std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - m0).count();
+              (a_to_move ? moves_a : moves_b)++;
               const Board after = an.moves[0].move.after;
               if (after.side[0] == 0) {
                 int pts = (jacoby && !turned ? 1 : int(after.result_for_winner(0))) * cubev;
@@ -337,10 +379,46 @@ int main(int argc, char** argv) {
     m /= pairs;
     for (double r : res) v += (r - m) * (r - m);
     double se = std::sqrt(v / (pairs - 1 > 0 ? pairs - 1 : 1) / pairs);
-    std::printf("duel %s%s (%d-ply) vs %s%s (%d-ply)%s: %d games, A ppg %+.4f (se %.4f)  doubles %ld passes %ld  %.0fs\n",
-                argv[2], ea.has_cube_head() ? "" : "[formula]", pa, argv[3], eb.has_cube_head() ? "" : "[formula]", pb,
-                cube ? " with cube" : "", 2 * pairs, m, se, doubles.load(), passes.load(),
-                std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
+    auto label = [](int plies, int mc) { return mc > 0 ? "MC " + std::to_string(mc) + "ms" : std::to_string(plies) + "-ply"; };
+    std::printf("duel %s%s (%s) vs %s%s (%s)%s: %d games, A ppg %+.4f (se %.4f)  doubles %ld passes %ld  %.0fs\n",
+                argv[2], ea.has_cube_head() ? "" : "[formula]", label(pa, mca).c_str(), argv[3],
+                eb.has_cube_head() ? "" : "[formula]", label(pb, mcb).c_str(), cube ? " with cube" : "", 2 * pairs, m, se,
+                doubles.load(), passes.load(), std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
+    std::printf("  thinking time per move incl. cube: A %.1f ms, B %.1f ms (single-threaded)\n",
+                moves_a ? ns_a.load() / 1e6 / moves_a.load() : 0.0, moves_b ? ns_b.load() / 1e6 / moves_b.load() : 0.0);
+    return 0;
+  }
+  if ((cmd == "mcmove" || cmd == "mccube") && argc >= 3) {
+    // bgcli mcmove <id> <dice> [time_ms] [threads]  |  bgcli mccube <id> [time_ms] [threads]
+    // MC search parameters via environment: BG_MC_TRUNC, BG_MC_BATCH, BG_MC_PRE, BG_MC_CAND,
+    // BG_MC_WINDOW, BG_MC_PRIOR, BG_MC_CUBEWIN, BG_MC_VR
+    Position p;
+    std::string err;
+    if (!parse_any(argv[2], p, &err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; }
+    int ai = 3, d1 = 0, d2 = 0;
+    if (cmd == "mcmove") { if (argc < 4) return 1; d1 = argv[3][0] - '0'; d2 = argv[3][1] - '0'; ai = 4; }
+    McConfig mc = mc_from_env(argc > ai ? std::atoi(argv[ai]) : 1000);
+    if (mc.cube_time_ms < 0) mc.cube_time_ms = mc.time_ms;
+    int threads = argc > ai + 1 ? std::atoi(argv[ai + 1]) : 0;
+    Evaluator ev;
+    if (!ev.init("nets/latest.bgnn", "data", &err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; }
+    Searcher s(ev, threads);
+    McStats st;
+    std::printf("%s", p.board.ascii().c_str());
+    if (cmd == "mcmove") {
+      MoveAnalysis a = mc_analyze_moves(s, ev, p.board, d1, d2, p.match, mc, &st);
+      for (size_t i = 0; i < a.moves.size() && i < 10; ++i) {
+        const MoveEval& m = a.moves[i];
+        std::printf("%2zu. %-24s emg %+.4f (%+.4f)  %s\n", i + 1, m.move.str().c_str(), m.emg, m.emg - a.moves[0].emg,
+                    m.rollouts ? ("rollouts " + std::to_string(m.rollouts)).c_str() : (std::to_string(m.plies) + "-ply").c_str());
+      }
+    } else {
+      CubeResult r = mc_analyze_cube(s, ev, p.board, p.match, mc, &st);
+      std::printf("No double %+.4f  Double/take %+.4f  Double/pass %+.4f   => %s\n", r.nd_emg, r.dt_emg, r.dp_emg,
+                  to_string(r.analysis.decision, p.match.owner == CubeOwner::Me));
+    }
+    std::printf("candidates %d, rollout games %ld in %d batches, %.3f s%s\n", st.candidates, st.games, st.batches,
+                st.seconds, st.used_rollouts ? "" : " (pre-ranking decided)");
     return 0;
   }
   if (cmd == "speed") {
