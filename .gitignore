@@ -12,3 +12,4 @@ nets/*
 .obsidian/
 *.mat
 !nets/big2_cube.bgnn
+.env

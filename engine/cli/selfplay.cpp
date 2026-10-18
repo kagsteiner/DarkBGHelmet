@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "core/ids.hpp"
+#include "core/settings.hpp"
 #include "core/movegen.hpp"
 #include "eval/cube.hpp"
 #include "eval/evaluator.hpp"
@@ -79,7 +80,7 @@ struct GameLog {
 
 int main(int argc, char** argv) {
   std::string net = "nets/latest.bgnn", out = "", name[2] = {"DarkBGHelmet_A", "DarkBGHelmet_B"}, positions;
-  int plies = 3, cube_extra = 1, match = 0, games = 10, threads = 4;
+  int plies = 3, cube_extra = 1, match = 0, games = 10, threads = default_threads(4);
   bool jacoby = true;
   unsigned seed = unsigned(std::chrono::system_clock::now().time_since_epoch().count());
   for (int i = 1; i < argc; ++i) {

@@ -40,6 +40,11 @@ The build produces these binaries:
 
 The first run creates `data/bearoff_os15.bin`, the one-sided bearoff database (under a second to generate).
 
+**Local settings.** Copy `.env.example` to `.env` and set `THREADS=<n>`. That's the default number
+of search threads for `bgplay`, `bgselfplay`, `bgei` and `bgserver`, read from the folder you start
+them in. An environment variable `THREADS` takes precedence over `.env`, and `--threads` on the
+command line takes precedence over both.
+
 ## Quick start
 
 ```

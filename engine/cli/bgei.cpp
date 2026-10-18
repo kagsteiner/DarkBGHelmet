@@ -18,11 +18,13 @@
 #include <string>
 
 #include "api/engine.hpp"
+#include "core/settings.hpp"
 
 using nlohmann::json;
 
 int main(int argc, char** argv) {
   bg::EngineOptions o;
+  o.threads = bg::default_threads(o.threads);  // THREADS in .env / environment; --threads wins
   for (int i = 1; i < argc; ++i) {
     std::string a = argv[i];
     if (a == "--net" && i + 1 < argc) o.net_path = argv[++i];

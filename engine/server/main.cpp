@@ -5,12 +5,14 @@
 #include <string>
 
 #include "api/engine.hpp"
+#include "core/settings.hpp"
 #include "httplib.h"
 
 using nlohmann::json;
 
 int main(int argc, char** argv) {
   bg::EngineOptions o;
+  o.threads = bg::default_threads(o.threads);  // THREADS in .env / environment; --threads wins
   int port = 8080;
   std::string host = "127.0.0.1";
   for (int i = 1; i < argc; ++i) {

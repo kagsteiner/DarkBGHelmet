@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "core/ids.hpp"
+#include "core/settings.hpp"
 #include "core/movegen.hpp"
 #include "eval/cube.hpp"
 #include "eval/evaluator.hpp"
@@ -100,7 +101,7 @@ static bool common_command(const std::string& raw, Evaluator& ev, Searcher& sear
 
 int main(int argc, char** argv) {
   std::string net = "nets/latest.bgnn";
-  int plies = 3, match = 0, threads = 4, cube_extra = 2;
+  int plies = 3, match = 0, threads = default_threads(4), cube_extra = 2;
   bool manual_dice = false;
   for (int i = 1; i < argc; ++i) {
     std::string a = argv[i];
