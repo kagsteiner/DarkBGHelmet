@@ -24,6 +24,7 @@ struct Arm {
   long n = 0;
   int next_t = 0;       // next trial index (common random numbers across arms)
   Probs psum = Probs::zero();
+  std::vector<float> vals;  // per-game values by trial index (for paired comparisons)
 };
 
 float flip_value(float v, bool money) { return money ? -v : 1.f - v; }
@@ -67,6 +68,7 @@ void run_batch(const Evaluator& ev, ThreadPool& pool, const RolloutConfig& rc, A
     const float v = a.flip ? flip_value(raw, money) : raw;
     a.sum += v;
     a.sumsq += double(v) * v;
+    a.vals.push_back(v);
     a.psum += a.flip ? r.probs.inverted() : r.probs;
   }
   a.n += count;
@@ -131,12 +133,13 @@ MoveAnalysis mc_analyze_moves(Searcher& s, const Evaluator& ev, const Board& b, 
   rc.truncate = cfg.truncate;
   rc.cubeful = true;
   rc.root_may_double = true;  // the opponent may double before its first roll
+  rc.cube_actions = cfg.rollout_cube_actions;
   rc.variance_reduction = cfg.variance_reduction;
   rc.seed = cfg.seed;
   ThreadPool& pool = s.pool();
   const int batch = std::max(1, cfg.batch);
 
-  // One batch per arm first (common dice prefix), then Thompson sampling.
+  // One batch per arm first (common dice prefix).
   for (Arm& a : bd.arms) {
     if (clk::now() >= deadline) break;
     run_batch(ev, pool, rc, a, batch, money);
@@ -144,26 +147,105 @@ MoveAnalysis mc_analyze_moves(Searcher& s, const Evaluator& ev, const Board& b, 
   }
   std::mt19937_64 rng(cfg.seed ^ b.hash());
   std::normal_distribution<float> nd01(0.f, 1.f);
-  while (clk::now() < deadline) {
-    const float sig = bd.sigma();
-    int pick = -1;
-    float best = -1e30f;
-    for (int i = 0; i < int(bd.arms.size()); ++i) {
-      const Arm& a = bd.arms[i];
-      const float sample = bd.mean(a) + bd.sd(a, sig) * nd01(rng);
-      if (sample > best) { best = sample; pick = i; }
+  const int na = int(bd.arms.size());
+  std::vector<float> final_value(na);
+
+  if (cfg.paired) {
+    // Paired Thompson sampling against the current leader.
+    const float k = std::max(1.f, cfg.prior_games);
+    const float sigma_d0 = money ? 0.5f : 0.12f;
+    auto val = [&](int i, int t) { const Arm& a = bd.arms[i]; return a.exact ? a.prior : a.vals[t]; };
+    auto count = [&](int i) { return bd.arms[i].exact ? (1 << 30) : int(bd.arms[i].n); };
+    // Posterior of (arm i - arm L): mean and standard deviation; also returns the paired sum of squares.
+    struct Diff { float mu = 0, sd = 0; double ss = 0; int m = 0; };
+    auto diff = [&](int i, int L, float sigma_d) {
+      Diff d;
+      const int m = std::min(count(i), count(L));
+      d.m = (bd.arms[i].exact && bd.arms[L].exact) ? 0 : m;
+      double sum = 0, sq = 0;
+      for (int t = 0; t < d.m; ++t) {
+        const double x = val(i, t) - val(L, t);
+        sum += x;
+        sq += x * x;
+      }
+      const double mean = d.m ? sum / d.m : 0.0;
+      d.ss = d.m ? sq - sum * mean : 0.0;
+      const float pd = bd.arms[i].prior - bd.arms[L].prior;
+      if (bd.arms[i].exact && bd.arms[L].exact) { d.mu = pd; d.sd = 0; return d; }
+      d.mu = float((k * pd + d.m * mean) / (k + d.m));
+      d.sd = sigma_d / std::sqrt(k + float(d.m));
+      return d;
+    };
+    int L = 0;  // the pre-ranking's best play starts as leader
+    auto pooled_sigma = [&]() {
+      double ss = 0;
+      long dof = 0;
+      for (int i = 0; i < na; ++i) {
+        if (i == L) continue;
+        Diff d = diff(i, L, sigma_d0);
+        if (d.m >= 2) { ss += d.ss; dof += d.m - 1; }
+      }
+      return dof >= 20 ? std::max(float(std::sqrt(ss / double(dof))), 0.05f * sigma_d0) : sigma_d0;
+    };
+    while (clk::now() < deadline) {
+      const float sig = pooled_sigma();
+      int c = -1;
+      float best = -1e30f;
+      for (int i = 0; i < na; ++i) {
+        if (i == L || bd.arms[i].exact) continue;
+        Diff d = diff(i, L, sig);
+        const float sample = d.mu + d.sd * nd01(rng);
+        if (sample > best) { best = sample; c = i; }
+      }
+      if (c < 0) {  // only exact challengers left: refine the leader itself if possible
+        if (bd.arms[L].exact) break;
+        c = L;
+      }
+      run_batch(ev, pool, rc, bd.arms[c], batch, money);
+      st.batches++;
+      if (c != L && !bd.arms[L].exact && bd.arms[L].n < bd.arms[c].n) {
+        run_batch(ev, pool, rc, bd.arms[L], int(bd.arms[c].n - bd.arms[L].n), money);
+        st.batches++;
+      }
+      // Change of leader if a challenger is now estimated to be better.
+      int nl = L;
+      float top = 0.f;
+      for (int i = 0; i < na; ++i) {
+        if (i == L) continue;
+        Diff d = diff(i, L, sig);
+        if (d.mu > top) { top = d.mu; nl = i; }
+      }
+      L = nl;
     }
-    if (pick < 0 || bd.arms[pick].exact) {
-      // The exact arm is the likely best; still refine the strongest rival.
-      int rival = -1;
-      float rv = -1e30f;
-      for (int i = 0; i < int(bd.arms.size()); ++i)
-        if (!bd.arms[i].exact && bd.mean(bd.arms[i]) > rv) { rv = bd.mean(bd.arms[i]); rival = i; }
-      if (rival < 0) break;
-      pick = rival;
+    // Absolute values: the leader's own estimate plus each arm's paired difference.
+    const Arm& la = bd.arms[L];
+    const float leader_value =
+        la.exact ? la.prior : float((k * la.prior + la.sum) / (k + double(la.n)));
+    const float sig = pooled_sigma();
+    for (int i = 0; i < na; ++i) final_value[i] = i == L ? leader_value : leader_value + diff(i, L, sig).mu;
+  } else {
+    // Independent Thompson sampling (one posterior per arm).
+    while (clk::now() < deadline) {
+      const float sig = bd.sigma();
+      int pick = -1;
+      float best = -1e30f;
+      for (int i = 0; i < na; ++i) {
+        const Arm& a = bd.arms[i];
+        const float sample = bd.mean(a) + bd.sd(a, sig) * nd01(rng);
+        if (sample > best) { best = sample; pick = i; }
+      }
+      if (pick < 0 || bd.arms[pick].exact) {
+        int rival = -1;
+        float rv = -1e30f;
+        for (int i = 0; i < na; ++i)
+          if (!bd.arms[i].exact && bd.mean(bd.arms[i]) > rv) { rv = bd.mean(bd.arms[i]); rival = i; }
+        if (rival < 0) break;
+        pick = rival;
+      }
+      run_batch(ev, pool, rc, bd.arms[pick], batch, money);
+      st.batches++;
     }
-    run_batch(ev, pool, rc, bd.arms[pick], batch, money);
-    st.batches++;
+    for (int i = 0; i < na; ++i) final_value[i] = bd.mean(bd.arms[i]);
   }
 
   // Write the posterior values back and re-rank the candidates.
@@ -171,7 +253,7 @@ MoveAnalysis mc_analyze_moves(Searcher& s, const Evaluator& ev, const Board& b, 
   for (size_t k = 0; k < cand.size(); ++k) {
     MoveEval me = base.moves[cand[k]];
     const Arm& a = bd.arms[k];
-    me.value = bd.mean(a);
+    me.value = final_value[k];
     me.emg = cm.to_emg(me.value);
     me.rollouts = int(a.n);
     if (a.n > 0) {
@@ -237,6 +319,7 @@ CubeResult mc_analyze_cube(Searcher& s, const Evaluator& ev, const Board& b, con
   rc.truncate = cfg.truncate;
   rc.cubeful = true;
   rc.root_may_double = false;  // "no double" means: the player to move does not double now
+  rc.cube_actions = cfg.rollout_cube_actions;
   rc.variance_reduction = cfg.variance_reduction;
   rc.seed = cfg.seed;
   // Both values are needed for the decision, so both arms get the same games

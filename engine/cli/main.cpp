@@ -25,7 +25,9 @@ using namespace bg;
 
 // MC search parameters from the environment (shared by duel, mcmove, mccube):
 // BG_MC_TRUNC, BG_MC_BATCH, BG_MC_PRE, BG_MC_CAND, BG_MC_WINDOW, BG_MC_PRIOR,
-// BG_MC_CUBEWIN, BG_MC_CUBEMS (cube budget, default half the move budget), BG_MC_VR.
+// BG_MC_CUBEWIN, BG_MC_CUBEMS (cube budget, default half the move budget), BG_MC_VR,
+// BG_MC_PAIRED (1 = paired comparison against the leader, default; 0 = independent arms),
+// BG_MC_CUBEACT (1 = cube actions inside the rollouts; default 0 = cube frozen).
 static McConfig mc_from_env(int time_ms) {
   auto envi = [](const char* k, int d) { const char* v = std::getenv(k); return v ? std::atoi(v) : d; };
   auto envf = [](const char* k, float d) { const char* v = std::getenv(k); return v ? float(std::atof(v)) : d; };
@@ -40,6 +42,8 @@ static McConfig mc_from_env(int time_ms) {
   mc.prior_games = envf("BG_MC_PRIOR", mc.prior_games);
   mc.cube_window = envf("BG_MC_CUBEWIN", mc.cube_window);
   mc.variance_reduction = envi("BG_MC_VR", 0) != 0;
+  mc.paired = envi("BG_MC_PAIRED", 1) != 0;
+  mc.rollout_cube_actions = envi("BG_MC_CUBEACT", 0) != 0;
   return mc;
 }
 

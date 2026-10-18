@@ -22,6 +22,10 @@ struct RolloutConfig {
   bool variance_reduction = false;  // ~16x lower variance but ~21x the cost per trial
   bool cubeful = true;
   bool root_may_double = false;  // may the player to move at the root double before its first roll?
+  // Cube actions during the rollout. Off: the cube stays as it is and only the
+  // truncation (or final) value is cubeful -- far less noise, as no game ends
+  // with a sudden double/pass.
+  bool cube_actions = true;
   uint64_t seed = 1;
 };
 

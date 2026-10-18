@@ -35,6 +35,13 @@ struct McConfig {
   float prior_games = 36.f;    // weight of the pre-ranking value, in rollout games
   float cube_window = 0.25f;   // roll out a cube decision only if it is within this EMG margin
   bool variance_reduction = false;
+  // Cube actions inside the rollouts (false: cube frozen, cubeful value at the
+  // truncation point only; much lower variance).
+  bool rollout_cube_actions = false;
+  // Paired comparison: candidates are judged by their per-game difference to the
+  // current leader on identical dice (much smaller spread than single games).
+  // prior_games then weighs the pre-ranking difference, in paired games.
+  bool paired = true;
   uint64_t seed = 1;
 };
 

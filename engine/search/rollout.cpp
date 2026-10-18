@@ -68,7 +68,8 @@ RolloutTrial rollout_trial(const Evaluator& ev, const Board& root, const MatchSt
     const CubeOwner own = parity == 0 ? owner_root : flip_owner(owner_root);
 
     // Cube action of the player to move (on the root player's first turn only if allowed).
-    if (cfg.cubeful && (ply > 0 || cfg.root_may_double) && own != CubeOwner::Opp && m.can_double(0, cube)) {
+    if (cfg.cubeful && cfg.cube_actions && (ply > 0 || cfg.root_may_double) && own != CubeOwner::Opp &&
+        m.can_double(0, cube)) {
       const Probs sp = ev.evaluate(pos);
       float xs[3];
       ev.cube_x(pos, xs);
