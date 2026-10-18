@@ -101,7 +101,7 @@ TEST_CASE("MC search: time budget, rollouts and consistent cube values") {
   mc.window = 1.0f;  // random test network: force several candidates
   McStats st;
   MoveAnalysis a = mc_analyze_moves(s, ev, Board::start(), 6, 4, ms, mc, &st);
-  REQUIRE(a.moves.size() == 15);
+  REQUIRE(a.moves.size() == 14);  // legal plays for the opening 6-4
   CHECK(st.candidates >= 2);
   CHECK(st.games > 0);
   CHECK(st.seconds < 0.5);
