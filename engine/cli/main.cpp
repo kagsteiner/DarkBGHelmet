@@ -283,6 +283,7 @@ int main(int argc, char** argv) {
     // BG_CUBE_EXTRA=n adds plies for cube decisions. A network without a cube
     // head plays with the cube formula. BG_MC_A=<ms> / BG_MC_B=<ms> make that side
     // use the time-controlled rollout search (parameters: see mc_from_env).
+    // BG_A_GROUPS / _TAILS / _FULL / _CAND (and BG_B_...) tune that side's search.
     Evaluator ea, eb;
     std::string err;
     if (!ea.init(argv[2], "data", &err) || !eb.init(argv[3], "data", &err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; }
@@ -308,6 +309,21 @@ int main(int argc, char** argv) {
         SearchConfig ca = SearchConfig::for_plies(pa), cb = SearchConfig::for_plies(pb);
         SearchConfig qa = SearchConfig::for_plies(std::min(7, pa + extra)), qb = SearchConfig::for_plies(std::min(7, pb + extra));
         ca.cubeful = cb.cubeful = cube;
+        // Per-side search tuning: BG_A_GROUPS / BG_A_TAILS / BG_A_FULL / BG_A_CAND (and _B_):
+        // roll groups, individually searched extreme rolls, fully expanded layers,
+        // maximum candidates at full depth.
+        auto tune = [&](SearchConfig& c, const char* side) {
+          auto e = [&](const char* what) {
+            std::string k = std::string("BG_") + side + "_" + what;
+            const char* v = std::getenv(k.c_str());
+            return v ? std::atoi(v) : -1;
+          };
+          if (e("GROUPS") >= 0) c.sampled_rolls = e("GROUPS");
+          if (e("TAILS") >= 0) c.tail_rolls = e("TAILS");
+          if (e("FULL") >= 0) c.full_layers = e("FULL");
+          if (e("CAND") >= 0) c.max_candidates = e("CAND");
+        };
+        tune(ca, "A"); tune(qa, "A"); tune(cb, "B"); tune(qb, "B");
         for (int i; (i = next.fetch_add(1)) < pairs;) {
           double sum = 0;
           for (int g = 0; g < 2; ++g) {
@@ -423,6 +439,79 @@ int main(int argc, char** argv) {
     }
     std::printf("candidates %d, rollout games %ld in %d batches, %.3f s%s\n", st.candidates, st.games, st.batches,
                 st.seconds, st.used_rollouts ? "" : " (pre-ranking decided)");
+    return 0;
+  }
+  if (cmd == "rollgroup" && argc >= 3) {
+    // bgcli rollgroup <benchfile> [plies] [positions] [threads]
+    // Compares grouped-roll variants with full expansion: cube "no double" values
+    // and checker-play choices, plus the time each variant needs.
+    const int plies = argc > 3 ? std::atoi(argv[3]) : 4;
+    const int npos = argc > 4 ? std::atoi(argv[4]) : 200;
+    Evaluator ev;
+    std::string err;
+    if (!ev.init("nets/latest.bgnn", "data", &err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; }
+    Searcher s(ev, argc > 5 ? std::atoi(argv[5]) : 0);
+    struct Item { Board b; int d1, d2; };
+    std::vector<Item> items;
+    FILE* f = std::fopen(argv[2], "r");
+    if (!f) return 1;
+    char pid[32], dice[8];
+    static char rest[1 << 17];
+    while (int(items.size()) < npos && std::fscanf(f, "%31s %7s", pid, dice) == 2) {
+      if (!std::fgets(rest, sizeof rest, f)) break;
+      Item it;
+      if (!parse_position_id(pid, it.b)) continue;
+      it.d1 = dice[0] - '0';
+      it.d2 = dice[1] - '0';
+      items.push_back(it);
+    }
+    std::fclose(f);
+    struct Variant { const char* name; int full_layers, groups, tails; };
+    const Variant variants[] = {
+        {"full (all 21 rolls)", 8, 21, 0}, {"7 groups", 1, 7, 0},   {"5 groups", 1, 5, 0},
+        {"4 groups", 1, 4, 0},             {"3 groups", 1, 3, 0},   {"1+2+1 (tails 1, 2 groups)", 1, 2, 1},
+        {"1+3+1", 1, 3, 1},                {"2+2+2", 1, 2, 2},      {"2+3+2", 1, 3, 2},
+    };
+    MatchState ms;
+    std::vector<float> ref_nd(items.size());
+    std::vector<Board> ref_best(items.size());
+    std::vector<std::vector<std::pair<Board, float>>> ref_moves(items.size());
+    std::printf("%d positions, %d-ply\n", int(items.size()), plies);
+    for (const Variant& v : variants) {
+      SearchConfig cfg = SearchConfig::for_plies(plies);
+      cfg.full_layers = v.full_layers;
+      cfg.sampled_rolls = v.groups;
+      cfg.tail_rolls = v.tails;
+      double se = 0, loss = 0, t_cube = 0, t_move = 0;
+      int same = 0;
+      const bool ref = &v == &variants[0];
+      for (size_t i = 0; i < items.size(); ++i) {
+        CubeResult c = s.analyze_cube(items[i].b, ms, cfg);
+        MoveAnalysis a = s.analyze_moves(items[i].b, items[i].d1, items[i].d2, ms, cfg);
+        t_cube += c.seconds;
+        t_move += a.seconds;
+        if (ref) {
+          ref_nd[i] = c.nd_emg;
+          ref_best[i] = a.moves[0].move.after;
+          for (const auto& m : a.moves) ref_moves[i].push_back({m.move.after, m.emg});
+          continue;
+        }
+        se += double(c.nd_emg - ref_nd[i]) * (c.nd_emg - ref_nd[i]);
+        if (a.moves[0].move.after == ref_best[i]) ++same;
+        else {
+          float best = ref_moves[i][0].second, mine = best;
+          for (const auto& [bd, e] : ref_moves[i]) if (bd == a.moves[0].move.after) mine = e;
+          loss += best - mine;
+        }
+      }
+      const int n = int(items.size());
+      if (ref)
+        std::printf("  %-28s cube %7.1f ms  move %7.1f ms   (reference)\n", v.name, 1000 * t_cube / n, 1000 * t_move / n);
+      else
+        std::printf("  %-28s cube %7.1f ms  move %7.1f ms   cube value rmse %.4f   same best play %.1f%%   loss %.2f mEq/move\n",
+                    v.name, 1000 * t_cube / n, 1000 * t_move / n, std::sqrt(se / n), 100.0 * same / n, 1000 * loss / n);
+      std::fflush(stdout);
+    }
     return 0;
   }
   if (cmd == "speed") {

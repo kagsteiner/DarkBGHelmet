@@ -108,7 +108,8 @@ struct Searcher::Root {
     money = ms.money();
     salt = mix64(u64(ms.length) * 1315423911u ^ u64(ms.score[0]) << 8 ^ u64(ms.score[1]) << 16 ^
                  u64(ms.cube) << 24 ^ u64(ms.owner) << 40 ^ u64(ms.crawford) << 44 ^ u64(ms.jacoby) << 45 ^
-                 u64(c.sampled_rolls) << 48 ^ u64(c.full_layers) << 54 ^ u64(c.cubeful) << 60);
+                 u64(c.sampled_rolls) << 48 ^ u64(c.full_layers) << 54 ^ u64(c.cubeful) << 60 ^
+                 u64(c.tail_rolls) << 36);
   }
   float flip(float v) const { return money ? -v : 1.f - v; }
 };
@@ -306,26 +307,41 @@ void Searcher::eval_fixed(const Root& R, const Board& P, int d, int parity, cons
       if (!ro[r].terminal) order[m++] = r;
     }
     std::sort(order, order + m, [&](int a, int b) { return ro[a].sv[0] < ro[b].sv[0]; });
-    float total = 0;
-    for (int i = 0; i < m; ++i) total += rolls[order[i]].w;
-    const int k = std::min(R.cfg.sampled_rolls, m);
-    int start = 0;
-    float cum = 0;
-    for (int g = 0; g < k && start < m; ++g) {
-      const float target = total * float(g + 1) / float(k);
-      int end = start;
+    // Deep correction for one group of rolls (order[lo..hi)) via its middle roll.
+    auto correct = [&](int lo, int hi) {
       float gw = 0;
-      while (end < m && (end == start || g == k - 1 || cum + gw + rolls[order[end]].w <= target + 1e-6f)) {
-        gw += rolls[order[end]].w;
-        ++end;
-      }
-      cum += gw;
-      const int rep = order[(start + end - 1) / 2];
+      for (int i = lo; i < hi; ++i) gw += rolls[order[i]].w;
+      const int rep = order[(lo + hi - 1) / 2];
       Probs dp;
       float dv[kMaxStates];
       deep_roll(R, n, ro[rep], d, dp, dv, ctx, layer);
       for (int q = 0; q < 5; ++q) acc_p[q] += gw * (dp[q] - ro[rep].sp[q]);
       for (int i = 0; i < S.n; ++i) acc_v[i] += gw * (dv[i] - ro[rep].sv[i]);
+    };
+    // The most extreme rolls at both ends (anti-jokers, jokers) are searched
+    // individually: that is where the static evaluation errs most.
+    const int tails = std::min(R.cfg.tail_rolls, m / 2);
+    for (int i = 0; i < tails; ++i) {
+      correct(i, i + 1);
+      correct(m - 1 - i, m - i);
+    }
+    // The remaining rolls form groups of equal probability mass.
+    const int lo0 = tails, hi0 = m - tails;
+    float total = 0;
+    for (int i = lo0; i < hi0; ++i) total += rolls[order[i]].w;
+    const int k = std::min(R.cfg.sampled_rolls, hi0 - lo0);
+    int start = lo0;
+    float cum = 0;
+    for (int g = 0; g < k && start < hi0; ++g) {
+      const float target = total * float(g + 1) / float(k);
+      int end = start;
+      float gw = 0;
+      while (end < hi0 && (end == start || g == k - 1 || cum + gw + rolls[order[end]].w <= target + 1e-6f)) {
+        gw += rolls[order[end]].w;
+        ++end;
+      }
+      cum += gw;
+      correct(start, end);
       start = end;
     }
   }

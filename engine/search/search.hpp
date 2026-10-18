@@ -45,7 +45,8 @@ constexpr int kMaxStates = 16;
 struct SearchConfig {
   int plies = 2;            // XG convention, 1..7
   int full_layers = 3;      // chance layers (from the evaluated node) expanded with all 21 rolls
-  int sampled_rolls = 7;    // rolls searched at deeper chance layers (21 = no sampling)
+  int sampled_rolls = 7;    // groups of similar rolls searched at deeper chance layers (21 = no sampling)
+  int tail_rolls = 0;       // extreme rolls (jokers / anti-jokers) at each end searched individually
   bool cubeful = true;
   // Root move filter per depth step: keep at most `keep[d]` moves within `width[d]`
   // (EMG) of the best when going from depth d to d+1.
